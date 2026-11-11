@@ -44,11 +44,13 @@ class ChatAiApiTest extends TestCase
 
     public function test_login_returns_token_and_logout_revokes_it(): void
     {
+        $this->freezeTime(); // expires_at is compared to the second
         $user = User::factory()->create(['password' => 'password']);
 
         $token = $this->postJson('/api/login', ['email' => $user->email, 'password' => 'password'])
             ->assertOk()
             ->assertJsonPath('token_type', 'Bearer')
+            ->assertJsonPath('expires_at', now()->addMinutes(1440)->format('Y-m-d H:i:s'))
             ->json('access_token');
 
         $this->withToken($token)->postJson('/api/logout')->assertOk();
@@ -88,7 +90,7 @@ class ChatAiApiTest extends TestCase
         Sanctum::actingAs($user);
         Http::fake(['ollama.test/*' => Http::response($this->completion('Middleware adalah...', 'qwen3:14b'))]);
 
-        $this->postJson('/api/chat-ai', ['prompt' => 'Jelaskan middleware!', 'theme' => 'security_scanner'])
+        $this->postJson('/api/chat-ai', ['prompt' => 'Jelaskan middleware!', 'theme' => 'prompt_engineer'])
             ->assertCreated()
             ->assertJsonPath('status', 'success')
             ->assertJsonPath('data.model_used', 'qwen3:14b')
@@ -105,7 +107,7 @@ class ChatAiApiTest extends TestCase
 
         // The theme's system prompt is injected as the first message
         Http::assertSent(fn (Request $r) => $r['messages'][0]['role'] === 'system'
-            && $r['messages'][0]['content'] === config('llm.themes.security_scanner')
+            && $r['messages'][0]['content'] === config('llm.themes.prompt_engineer')
             && $r['stream'] === false);
     }
 

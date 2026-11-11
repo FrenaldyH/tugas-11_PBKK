@@ -18,7 +18,7 @@ class DatabaseSeeder extends Seeder
         // Demo account for Postman / the playground page (password: "password")
         User::factory()->create([
             'name' => 'Demo Kelompok 1',
-            'email' => 'demo@agentchat.test',
+            'email' => 'demo@promptlab.test',
             'password' => 'password',
         ]);
     }

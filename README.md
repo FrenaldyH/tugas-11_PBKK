@@ -1,6 +1,7 @@
-# AgentChat Hub — Tugas 11 PBKK: Secure LLM Chat API Hub
+# PromptLab API Hub — Tugas 11 PBKK: Secure LLM Chat API Hub
 
-Backend API terproteksi untuk platform Agentic AI **Kelompok 1**. Laravel menerima prompt, meneruskannya ke LLM
+Backend API terproteksi untuk **PromptLab**, final project platform Agentic AI **Kelompok 1** ("Local-first Agentic
+Prompt, Context & Memory Optimization"). Laravel menerima prompt, meneruskannya ke LLM
 (Ollama lokal, dengan fallback otomatis ke Senopati AI ITS), mencatat riwayatnya ke database, dan mengembalikan JSON
 yang dibungkus API Resource. Semua endpoint chat dikunci token **Laravel Sanctum**. Antarmuka Livewire menyusul di
 Pertemuan 12; untuk sekarang tersedia halaman **playground** di `/` untuk demo (desain: [`notes/DESIGN.md`](notes/DESIGN.md)).
@@ -15,7 +16,7 @@ Pertemuan 12; untuk sekarang tersedia halaman **playground** di `/` untuk demo (
 | Respons JSON dibungkus API Resource | [`ChatLogResource`](app/Http/Resources/ChatLogResource.php) |
 | Terhubung ke Ollama / Senopati | [`LlmClient`](app/Services/LlmClient.php), konfigurasi di [`config/llm.php`](config/llm.php) |
 | Challenge 1: streaming SSE | `POST /api/chat-ai/stream` |
-| Challenge 2: system prompt per tema | `theme`: `security_scanner`, `malware_scanner`, `log_analyzer`, `default` |
+| Challenge 2: system prompt per tema | `theme`: `default`, `prompt_engineer`, `context_engineer`, `evaluator` (lihat [Tema agent](#tema-agent-promptlab)) |
 | Challenge 3: fallback ke Senopati | urutan `LLM_PROVIDER_ORDER`, retry hanya untuk error koneksi/5xx |
 | `.env` & `vendor/` tidak ikut Git | `.gitignore` bawaan Laravel |
 
@@ -37,7 +38,7 @@ ollama pull qwen3:14b             # laptop tanpa GPU besar: pakai model kecil, m
 ollama serve                      # http://localhost:11434
 ```
 
-Akun demo: `demo@agentchat.test` / `password`.
+Akun demo: `demo@promptlab.test` / `password`.
 
 ### Variabel `.env`
 
@@ -66,7 +67,7 @@ Tukar email + password dengan token. Dibatasi 6 request/menit.
 
 ```json
 // Request
-{ "email": "demo@agentchat.test", "password": "password", "device_name": "postman" }
+{ "email": "demo@promptlab.test", "password": "password", "device_name": "postman" }
 
 // 200 OK (token hanya tampil sekali; server menyimpan hash SHA-256-nya)
 {
@@ -74,7 +75,7 @@ Tukar email + password dengan token. Dibatasi 6 request/menit.
   "access_token": "1|abc123...",
   "token_type": "Bearer",
   "expires_at": "2026-11-12 09:30:00",
-  "user": { "id": 1, "name": "Demo Kelompok 1", "email": "demo@agentchat.test" }
+  "user": { "id": 1, "name": "Demo Kelompok 1", "email": "demo@promptlab.test" }
 }
 
 // 401
@@ -87,7 +88,7 @@ Kirim prompt, tunggu jawaban lengkap. Dibatasi 20 request/menit per user.
 | Field | Tipe | Aturan |
 |---|---|---|
 | `prompt` | string | wajib, maks 1000 karakter |
-| `theme` | string | opsional: `default` (bawaan), `security_scanner`, `malware_scanner`, `log_analyzer` |
+| `theme` | string | opsional: `default` (bawaan), `prompt_engineer`, `context_engineer`, `evaluator` |
 
 ```json
 // Request
@@ -150,6 +151,21 @@ Riwayat milik user yang login saja, terbaru dulu, 10 per halaman (`?page=2`).
 `/user` mengembalikan profil pemilik token. `/logout` mencabut **hanya token yang sedang dipakai**
 (perangkat lain tetap login) → `{"status":"success","message":"Token dicabut."}`.
 
+## Tema agent PromptLab
+
+System prompt dipilih lewat field `theme` dan disisipkan sebagai pesan `system` pertama
+([`config/llm.php`](config/llm.php)). Keempat tema mengikuti alur PromptLab *Ask → Context → Act → Evaluate*.
+
+| `theme` | Peran di PromptLab | Perilaku yang diminta dari model |
+|---|---|---|
+| `default` | Workspace | Menjawab ringkas, tidak mengarang endpoint/file, menyebut info yang kurang |
+| `prompt_engineer` | Prompt Engineering | Menandai bagian ambigu dan constraint yang hilang; saran prompt **hanya bila perlu** |
+| `context_engineer` | Context Engineering | Memilih informasi/file yang relevan untuk model beserta alasannya |
+| `evaluator` | Evaluation | Membandingkan baseline A vs kandidat B; benar dulu, baru hemat |
+
+Menambah tema cukup dengan menambah satu entri di `themes`. Validasi `ChatAiRequest` dan dropdown playground membaca
+daftar yang sama, jadi ikut berubah otomatis.
+
 ## Skema `chat_logs`
 
 | Kolom | Tipe | Catatan |
@@ -194,7 +210,8 @@ LLM dipalsukan dengan `Http::fake()`, jadi test tidak butuh Ollama menyala.
 1. `POST /api/chat-ai` **tanpa** token → 401.
 2. `POST /api/login` → salin `access_token` ke tab *Authorization → Bearer Token*.
 3. `POST /api/chat-ai` dengan prompt 1001 karakter → 422.
-4. `POST /api/chat-ai` dengan `theme: security_scanner` → 201 + JSON.
+4. `POST /api/chat-ai` dengan `theme: prompt_engineer` dan prompt yang sengaja ambigu
+   (mis. "Dokumentasikan API login") → 201 + JSON berisi analisis dan saran prompt.
 5. `POST /api/chat-ai/stream` → event mengalir satu per satu.
 6. Matikan `ollama serve`, ulangi langkah 4 → `provider: senopati` (bila `.env` Senopati terisi) atau 503.
 7. `GET /api/chat-ai/history` → semua percobaan tercatat.

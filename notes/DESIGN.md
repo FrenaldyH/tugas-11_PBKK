@@ -1,6 +1,6 @@
 ---
 version: alpha
-name: AgentChat-Hub-design
+name: PromptLab-API-Hub-design
 description: Halaman playground untuk Secure LLM Chat API Hub (login token, kirim prompt, lihat jawaban AI mengalir, riwayat chat). Mayoritas diadaptasi dari bahasa desain NVIDIA (hitam/putih/abu + satu aksen hijau, sudut tajam, garis tipis). Komponen yang tidak ada di NVIDIA (dialog, hover, label/error form) diambil dari Huawei ID. Komponen khusus chat dirancang dari token NVIDIA. Tanpa logo dan nama merek NVIDIA/Huawei di UI.
 source:
   nvidia: "VoltAgent/awesome-design-md, design-md/nvidia/DESIGN.md (MIT), dicek ulang ke https://www.nvidia.com/en-us/ pada 2026-11-11 lewat computed style"
@@ -93,7 +93,7 @@ components:
   history-table:    { headerBackground: "{colors.surface-soft}", headerTypography: "{typography.caption-md}", bodyTypography: "{typography.body-sm}", rowBorder: "1px solid {colors.hairline}", cellPadding: "{spacing.sm} {spacing.md}" }
 ---
 
-# Desain AgentChat Hub (mayoritas NVIDIA, celah dari Huawei)
+# Desain PromptLab API Hub (mayoritas NVIDIA, celah dari Huawei)
 
 ## Ringkasan
 Karakter visual NVIDIA: **bingkai hitam** (nav + footer), **isi putih**, garis tipis abu, sudut nyaris tajam, dan

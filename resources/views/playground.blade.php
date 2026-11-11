@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>AgentChat Hub</title>
+    <title>PromptLab API Hub</title>
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=inter:400,700|jetbrains-mono:400" rel="stylesheet">
     <style>
@@ -117,7 +117,7 @@
 <body>
 <nav class="nav">
     <div class="wrap">
-        <div class="brand">AgentChat Hub</div>
+        <div class="brand">PromptLab API Hub</div>
         <div class="nav-user" id="navUser" hidden>
             <span id="userEmail"></span>
             <button class="btn btn-dark" id="logoutBtn" type="button">Keluar</button>
@@ -133,7 +133,7 @@
         <form id="loginForm" class="stack" novalidate>
             <div>
                 <label for="email">Email</label>
-                <input class="input" id="email" type="email" autocomplete="username" value="demo@agentchat.test" required>
+                <input class="input" id="email" type="email" autocomplete="username" value="demo@promptlab.test" required>
             </div>
             <div>
                 <label for="password">Password</label>
