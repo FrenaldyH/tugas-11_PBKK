@@ -1,0 +1,732 @@
+www.its.ac.id INSTITUT TEKNOLOGI SEPULUH NOPEMBER, Surabaya - Indonesia
+RESTful API & Integrasi LLM API
+RESTful API & Integrasi LLM API
+Membuka Pintu Menuju Agentic AI — Menghubungkan Laravel dengan Ollama & Senopati AI
+Pemrograman Berbasis Kerangka Kerja (PBKK) • Departemen Teknik Informatika ITS
+Review Perkuliahan & Agenda Hari Ini
+TITIK BALIK SEMESTER
+Kemarin kita telah menuntaskan paruh pertama
+semester dengan merancang database dinamis
+(Migrations), mengaktifkan model relasional
+(Eloquent Relationships), dan menguasai CRUD +
+validasi FormRequest.
+Mulai minggu ini, kita berpindah haluan menuju
+integrasi kecerdasan buatan. Kita akan
+menghubungkan Laravel dengan LLM (Ollama &
+Senopati AI ITS) melalui RESTful API dan token
+security sebagai fondasi utama platform Agentic AI
+kelompok Anda.
+01 RESTful API & API Resource
+Membangun endpoint JSON yang aman dan mengatur transformasi data
+Model.
+02 Autentikasi Token Sanctum
+Melindungi rute API secara stateless menggunakan token otorisasi Sanctum.
+03 Koneksi API LLM Lokal/ITS
+Belajar format Chat Completion dan memanggil API Ollama & Senopati AI.
+04 Penanganan Stream & Error
+Mengalirkan respons text AI sepotong-sepotong secara real-time.
+BAGIAN 01
+RESTful API di Laravel
+Memisahkan logika tampilan dengan pertukaran data stateless berbasis standardisasi JSON.
+RESTFUL API DI LARAVEL
+Konsep Utama: Apa Bedanya API dengan Web Biasa?
+Web biasa (routes/web.php) dirancang mengembalikan dokumen
+HTML utuh yang langsung dirender oleh web browser.
+Aplikasi web biasa memanfaatkan session berbasis Cookie dan
+mengandalkan token CSRF otomatis untuk proteksi form.
+API (routes/api.php) hanya mengembalikan representasi data
+murni dalam format terstruktur seperti JSON.
+API bersifat stateless murni, artinya server tidak mengingat state
+sesi user. Setiap request harus menyertakan kredensial lengkap.
+SKENARIO PENGGUNAAN API
+Aplikasi Seluler (Mobile App): Android/iOS memerlukan
+endpoint JSON, bukan file template Blade HTML.
+Single Page Application (SPA): Framework frontend
+seperti React, Vue, atau Angular murni bertukar data
+via API.
+Integrasi Antar Server (Microservices): Aplikasi Anda
+memanggil server AI eksternal atau sebaliknya.
+RESTFUL API DI LARAVEL
+Mengenal Router API: routes/api.php
+Semua rute yang didaftarkan di dalam routes/api.php
+akan secara otomatis mendapatkan awalan URL prefix
+'/api/'.
+Rute API didesain bebas dari middleware session
+bawaan (seperti startSession atau verifyCsrfToken).
+Rute ini menggunakan Throttle middleware secara
+default untuk membatasi jumlah request dari satu IP
+address demi mencegah serangan DDoS.
+Sintaks pendek 'Route::apiResource()' otomatis
+mendaftarkan endpoint CRUD murni tanpa method
+'create' dan 'edit'.
+routes/api.php
+<?php
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\ProdukController;
+// Akses URL: GET http://domain.its/api/produk
+Route::get('/produk', [ProdukController::class, 'index']);
+// Menggunakan apiResource untuk CRUD otomatis
+// Tanpa halaman visual form input/edit
+Route::apiResource('produk', ProdukController::class);
+RESTFUL API DI LARAVEL
+Komparasi Rute: Route::resource vs Route::apiResource
+Laravel menyederhanakan rute API dengan membuang metode tampilan visual (HTML) yang tidak dibutuhkan.
+HTTP Verb URL Path Route::resource() (Web) Route::apiResource() (API)
+GET /produk index (Tampil semua produk) index (JSON semua produk)
+GET /produk/create create (Render form input HTML) DIHAPUS (Tidak dibutuhkan API)
+POST /produk store (Simpan data baru) store (JSON hasil simpan)
+GET /produk/{id} show (Tampil detail produk) show (JSON detail produk)
+GET /produk/{id}/edit edit (Render form edit HTML) DIHAPUS (Tidak dibutuhkan API)
+PUT/PATCH /produk/{id} update (Ubah data) update (JSON hasil ubah)
+DELETE /produk/{id} destroy (Hapus data) destroy (JSON status hapus)
+RESTFUL API DI LARAVEL
+Mengatur Transformasi Data JSON: Eloquent API Resource
+Eloquent API Resource bertindak sebagai layer transformasi
+penengah antara Model database dengan respon JSON.
+Membantu menyembunyikan kolom database yang sensitif
+(seperti password, hash, token) agar tidak bocor ke publik.
+Memungkinkan penamaan ulang field JSON agar berbeda dari
+nama asli kolom tabel fisik database.
+Sangat mudah dibuat menggunakan perintah Artisan: 'php
+artisan make:resource ProdukResource'.
+MENGAPA INI PENTING?
+Integritas Data: Menjaga klien API agar tidak rusak
+saat skema kolom database fisik mengalami perbaikan
+nama.
+Formatting Fleksibel: Mengubah angka murni database
+menjadi string terformat (misal: format mata uang
+rupiah).
+Koneksi Relasi: Menyisipkan data relasi anak secara
+opsional hanya saat dipanggil oleh kueri.
+RESTFUL API DI LARAVEL
+Implementasi Kode: Mendefinisikan API Resource
+Method 'toArray()' mengontrol penuh pemetaan array
+asosiatif yang akan diubah otomatis menjadi teks JSON.
+Variabel '$this' di dalam kelas Resource otomatis
+mengarah pada instansi objek Model yang sedang
+ditransformasikan.
+Anda dapat memasang fungsi formatting PHP langsung
+pada properti sebelum diekspor ke format JSON.
+Gunakan 'ProdukResource::collection($data)' jika data
+berupa array/koleksi database berganda.
+app/Http/Resources/ProdukResource.php
+<?php
+namespace App\Http\Resources;
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+class ProdukResource extends JsonResource {
+public function toArray(Request $request): array {
+return [
+'id' => $this->id,
+'nama_produk' => $this->nama, // Rename
+'harga_rupiah' => 'Rp ' . number_format($this->harga),
+'dibuat_pada' => $this->created_at->format('Y-m-d'),
+];
+}
+}
+RESTFUL API DI LARAVEL
+Manfaat Nyata Penggunaan Eloquent API Resource
+Sintaks yang Seragam: Mengurangi perulangan kodingan
+formatting berulang di setiap Controller terpisah.
+Pencegahan Kebocoran: Melindungi data internal keamanan
+server dari kueri mentah 'select *' database.
+Pemuatan Kondisional: Menampilkan relasi relasional anak
+secara cerdas hanya jika relasi tersebut telah dimuat (eager
+loading).
+Respon Metadata: Mengizinkan penambahan elemen luar
+kustom seperti status sukses, waktu kueri, atau lisensi API.
+CONTOH KASUS KONDISIONAL
+Contoh Relasi Cerdas: '$this-
+>whenLoaded("dosenWali")' otomatis
+menyembunyikan kolom pembimbing apabila tidak
+dipanggil kueri, menghindari redundansi data.
+Custom Wrapping: Laravel secara default
+membungkus data dalam objek 'data' JSON untuk
+melahirkan standarisasi.
+RESTFUL API DI LARAVEL
+Diskusi Kelas: Merancang Desain Endpoint API
+Untuk tema kelompok platform Agentic AI Anda, informasi apa
+saja yang wajib disajikan sebagai output JSON?
+Bagaimana cara terbaik meminimalkan ukuran payload data
+JSON untuk koneksi internet seluler yang terbatas?
+Mengapa kita harus menghindari pengembalian respon database
+mentah (direct Eloquent model return) ke klien API? POIN REFLEKSI PENTING
+Keamanan: Database mentah mengekspos detail fisik
+sistem.
+Fleksibilitas: Perubahan minor tabel database
+langsung merusak aplikasi mobile klien jika tidak
+dibungkus API Resource.
+Kerapian: API Resource menjaga konsistensi tipe data
+keluaran.
+BAGIAN 02
+Autentikasi API dengan Laravel Sanctum
+Mengamankan gerbang data stateless menggunakan sistem token kriptografis yang ringan.
+AUTENTIKASI API
+Konsep Keamanan: Mengapa API Memerlukan Token?
+API bersifat stateless, server tidak menyimpan file session atau
+mengenali identitas user dari cookie browser.
+Setiap request HTTP yang dikirimkan oleh klien wajib
+membuktikan keabsahan dirinya secara mandiri di setiap
+panggilan.
+Token bertindak sebagai tiket masuk digital yang unik, aman,
+berdurasi aktif, dan dapat dicabut sewaktu-waktu.
+Menyimpan password asli di aplikasi klien sangat berbahaya;
+token lahir sebagai kunci pengganti sementara.
+ANCAMAN TANPA OTORISASI API
+Kebocoran Data: Pihak luar dapat mengambil atau
+mengubah data database via tools seperti
+Postman/cURL.
+Eksploitasi Server LLM: Tanpa auth, kuota token API
+kecerdasan buatan Anda bisa dikuras habis oleh
+spammer.
+AUTENTIKASI API
+Solusi Resmi Ekosistem: Mengenal Laravel Sanctum
+Laravel Sanctum menyediakan sistem autentikasi super ringan
+dan aman untuk SPA, aplikasi mobile, maupun token API murni.
+Menerbitkan token berbasis teks acak (Personal Access Tokens)
+yang disimpan secara aman dalam bentuk hash SHA-256.
+Sanctum sangat mudah diintegrasikan karena sudah tertanam
+sebagai standar bawaan pada instalasi Laravel modern.
+Mendukung pengaturan izin akses kemampuan token (*token
+abilities*) untuk membatasi hak operasional klien.
+KELEBIHAN SANCTUM DIBANDING
+PASSPORT
+Sanctum: Ringan, tidak membutuhkan tabel kompleks,
+sangat cocok untuk startup dan proyek akademik skala
+menengah.
+Passport: Berat, menerapkan standar OAuth2 penuh,
+rumit diatur, hanya disarankan untuk enterprise skala
+raksasa.
+AUTENTIKASI API
+Langkah Praktis: Instalasi & Konfigurasi API
+Pada Laravel 11/12, sistem API dan Sanctum diaktifkan
+secara instan melalui satu baris perintah konsol.
+Perintah 'install:api' otomatis membuat berkas
+routes/api.php, melakukan migrasi tabel database token,
+dan mendaftarkan middleware.
+Model 'User' wajib dipasangi PHP Trait 'HasApiTokens'
+agar dapat memanggil fungsi pembuatan token bawaan
+Sanctum.
+Terminal & app/Models/User.php
+# 1. Jalankan perintah instalasi API di Terminal
+php artisan install:api
+// 2. Tambahkan Trait HasApiTokens pada Model User
+namespace App\Models;
+use Laravel\Sanctum\HasApiTokens; // Import
+use Illuminate\Foundation\Auth\User as Authenticatable;
+class User extends Authenticatable {
+use HasApiTokens, HasFactory, Notifiable; // Gunakan Trait
+}
+AUTENTIKASI API
+Implementasi Kode: Menerbitkan Token Sanctum
+Gunakan method 'createToken()' pada instansi Model
+User untuk memproduksi token baru.
+Panggilan 'plainTextToken' sangat penting karena nilai
+token murni hanya tampil SATU KALI saat pembuatan.
+Token murni wajib segera dikirim balik sebagai JSON
+agar disimpan oleh klien (seperti di secure storage mobile
+app).
+Server selanjutnya hanya menyimpan hash SHA-256 dari
+token tersebut untuk mencocokkan keaslian request.
+app/Http/Controllers/Api/AuthController.php
+public function login(Request $request) {
+$request->validate(['email'=>'required|email',
+'password'=>'required']);
+$user = User::where('email', $request->email)->first();
+if (!$user || !Hash::check($request->password, $user->password))
+{
+return response()->json(['message' => 'Kredensial salah'],
+401);
+}
+// Terbitkan token
+$token = $user->createToken('agent-access-token')-
+>plainTextToken;
+return response()->json([
+'access_token' => $token, 'token_type' => 'Bearer'
+]);
+}
+AUTENTIKASI API
+Format Pengiriman Request: HTTP Bearer Token
+Klien API wajib melampirkan token murni yang didapat pada
+setiap header HTTP request berikutnya.
+Menggunakan skema otorisasi standar HTTP: 'Authorization:
+Bearer {token_plain_text_tanpa_kurung_kurawal}'.
+Wajib melampirkan header 'Accept: application/json' agar Laravel
+otomatis mengembalikan pesan error validasi dalam format
+JSON.
+Keamanan Bearer Token wajib dilindungi dengan protokol
+SSL/HTTPS di produksi agar token tidak disadap di tengah jalan.
+CONTOH HEADER HTTP
+Host: domain.its
+Authorization: Bearer 3|abc123xyzTokensSecretKey...
+Accept: application/json
+Content-Type: application/json
+AUTENTIKASI API
+Keamanan Rute: Melindungi Route API
+Rute yang dikunci dengan middleware 'auth:sanctum'
+akan menolak semua request tanpa token sah dengan
+respon HTTP 401 Unauthorized.
+Setelah berhasil menembus middleware, Anda dapat
+mengakses objek pengguna aktif lewat fungsi 'request()-
+>user()'.
+Sangat disarankan membungkus rute transaksional
+kustom kelompok Anda ke dalam blok pengaman ini.
+routes/api.php
+<?php
+use App\Http\Controllers\Api\TanyaAiController;
+// Rute Publik (Tamu biasa)
+Route::post('/login', [AuthController::class, 'login']);
+// Rute Terproteksi (Hanya user dengan token sah)
+Route::middleware('auth:sanctum')->group(function () {
+Route::post('/tanya-ai', [TanyaAiController::class, 'ask']);
+Route::get('/user-profile', function(Request $request) {
+return $request->user();
+});
+});
+AUTENTIKASI API
+Diskusi Kelas: Keamanan Token API di Industri
+Apa yang akan terjadi jika token plainTextToken bocor ke publik
+atau terunggah tanpa sengaja ke GitHub?
+Bagaimana cara terbaik melakukan pencabutan token
+(revocation) untuk satu perangkat spesifik yang hilang?
+Bagaimana cara menetapkan waktu kedaluwarsa (expiration
+time) otomatis pada token Sanctum? JAWABAN PRAKTIS
+Pencabutan Kilat: '$user->tokens()->where("id",
+$tokenId)->delete()' instan mencabut akses perangkat
+spesifik.
+Konfigurasi Kedaluwarsa: Ubah opsi 'expiration' pada
+file 'config/sanctum.php' (misal: 60 menit) demi
+keamanan.
+BAGIAN 03
+Mengenal API Large Language Model
+(LLM)
+Memahami protokol komunikasi HTTP Chat Completion dengan otak kecerdasan buatan.
+MENGENAL API LLM
+Konsep Komunikasi: Bagaimana Aplikasi 'Berbicara' dengan AI?
+LLM (Large Language Model) pada dasarnya adalah fungsi
+pemroses string raksasa berbasis probabilitas.
+Komunikasi dilakukan lewat protokol standard HTTP POST
+mengirimkan array percakapan masa lalu (context/chat history).
+Pola interaksi: Klien mengirimkan muatan pesan (payload)
+\(_x000D_ightarrow\) Server AI memproses kueri
+\(_x000D_ightarrow\) Server mengembalikan respon jawaban
+teks.
+Penyedia LLM membungkus fungsi ini dalam standardisasi
+format API Chat Completion (kompatibel dengan format OpenAI).
+TIGA PERAN UTAMA PESAN
+System: Instruksi dasar perilaku AI (misal: 'Anda
+adalah pakar keamanan siber ITS').
+User: Pertanyaan atau instruksi dinamis yang
+dikirimkan oleh pengguna.
+Assistant: Riwayat jawaban yang telah dikeluarkan
+oleh AI untuk menjaga konteks.
+MENGENAL API LLM
+Struktur Payload: JSON Request Chat Completion
+HTTP request dikirimkan ke endpoint server AI sebagai
+metode POST membawa data tubuh (body) berupa
+JSON.
+Parameter 'messages' berisikan riwayat array
+percakapan terurut dari awal hingga akhir.
+Parameter 'stream' diset 'false' jika klien ingin menunggu
+jawaban AI selesai diproduksi utuh sebelum dikirimkan
+sekaligus.
+POST /api/chat (JSON format)
+{
+"model": "qwen3:14b",
+"messages": [
+{
+"role": "system",
+"content": "Anda adalah asisten AI ramah dari ITS."
+},
+{
+"role": "user",
+"content": "Beri saya 1 contoh rute Laravel."
+}
+],
+"stream": false
+}
+MENGENAL API LLM
+Mengenal Ragam Parameter Kunci API LLM
+Model: Menentukan jenis model otak AI yang digunakan (misal:
+'qwen3:14b', 'llama3', 'mistral').
+Temperature: Mengontrol kreativitas AI (0.0 =
+kaku/konsisten/akademis, 1.0 = sangat kreatif/variatif).
+Max Tokens: Membatasi panjang maksimal jumlah kata jawaban
+AI untuk menghemat kuota memori server.
+Stream: Mengatur mode pengiriman jawaban sepotong-sepotong
+(streaming) vs menunggu selesai (non-streaming).
+REKOMENDASI SETELAN PROYEK
+Untuk Agent Coding / Scan Kode: Set temperature
+rendah (0.1 s.d 0.3) agar AI tidak mengarang bebas
+kode program.
+Untuk Agent Kreatif / Chat Umum: Set temperature
+moderat (0.7 s.d 0.8) agar jawaban terasa lebih luwes.
+MENGENAL API LLM
+Komparasi Infrastruktur: Ollama vs Senopati AI ITS
+Dua alternatif infrastruktur LLM gratis tanpa biaya API key berbayar yang disediakan khusus untuk mahasiswa PBKK.
+Dimensi Perbandingan Ollama (Lokal / Self-Hosted) Senopati AI (Layanan Internal ITS)
+Infrastruktur Berjalan lokal di laptop sendiri (Off-grid) Berjalan di kluster GPU server cloud ITS
+Biaya & API Key 100% Gratis, Tanpa limit, Tanpa API Key Gratis untuk mahasiswa, Membutuhkan Token ITS
+Pilihan Model Bebas unduh model (Qwen, Llama, Gemma, dll) Model bawaan yang dioptimasi oleh tim ITS
+Konsumsi Sumber Daya Memakan RAM & GPU lokal laptop Anda RAM & GPU laptop Anda 100% aman dan dingin
+Kebutuhan Internet Sama sekali tidak butuh internet (Offline) Wajib terkoneksi jaringan internet/intranet ITS
+Skenario Ideal Pengembangan mandiri, tanpa sinyal internet Skala demo kelas, laptop spek standar tanpa GPU
+MENGENAL API LLM
+Praktik Mandiri: Menjalankan Ollama Secara Lokal
+Unduh installer Ollama resmi sesuai sistem operasi Anda
+di https://ollama.com/download.
+Tarik model target menggunakan baris perintah
+cmd/terminal lokal laptop Anda.
+Ollama dev server otomatis berjalan di latar belakang
+melayani request port lokal 'http://localhost:11434'.
+Terminal / Command Prompt
+# 1. Download & Install Ollama, lalu buka Terminal
+# 2. Tarik model cerdas Qwen 14 Miliar Parameter
+ollama pull qwen3:14b
+# 3. Nyalakan server Ollama lokal
+ollama serve
+# 4. Endpoint HTTP lokal siap menerima request di:
+# http://localhost:11434/api/chat
+MENGENAL API LLM
+Implementasi Laravel: Laravel HTTP Client
+Gunakan facade 'Http::post()' Laravel yang bersih dan
+kuat untuk menggantikan penulisan cURL manual.
+Metode 'timeout(n)' wajib dipasang karena proses kueri
+berpikir LLM memakan waktu jauh lebih lama dibanding
+query SQL biasa.
+Gunakan penanganan exception try-catch untuk
+mengamankan aplikasi dari crash apabila server AI lokal
+mati.
+app/Http/Controllers/Api/TanyaAiController.php
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+public function ask(Request $request) {
+$request->validate(['prompt' => 'required|string']);
+try {
+$response = Http::timeout(60)-
+>post('http://localhost:11434/api/generate', [
+'model' => 'qwen3:14b',
+'prompt' => $request->prompt,
+'stream' => false,
+]);
+return response()->json(['response' => $response-
+>json('response')]);
+} catch (\Exception $e) {
+Log::error('LLM Error: ' . $e->getMessage());
+return response()->json(['error' => 'Gagal koneksi ke AI'],
+500);
+}
+}
+BAGIAN 04
+Integrasi Lanjut & Response Streaming
+Menangkap respon sepotong-sepotong demi pengalaman pengguna interaktif real-time.
+RESPONSE STREAMING
+Konsep Transmisi: Apa itu Response Streaming?
+Response streaming adalah teknik mentransmisikan data teks
+dari server ke klien secara bertahap (chunked) saat diproduksi.
+Server tidak perlu menunggu AI menyelesaikan 500 kata
+jawaban secara utuh di memori baru dikirim sekaligus.
+Memanfaatkan standar Server-Sent Events (SSE) atau Chunked
+Transfer Encoding untuk menjaga koneksi tetap terbuka.
+Teks jawaban dikirimkan per karakter atau per kata, mirip efek
+mengetik langsung di monitor.
+MENGAPA STREAMING PENTING?
+Menghilangkan Loading Lama: Menghapus waktu
+tunggu kosong 10-15 detik yang membuat user
+mengira aplikasi hang.
+Interaktivitas Instan: Memberikan respon pertama
+(*Time-to-First-Token*) di bawah 1 detik kepada
+pengguna.
+Sangat Hemat RAM Server: Tidak menimbun seluruh
+buffer teks jawaban raksasa di memori RAM PHP.
+RESPONSE STREAMING
+Komparasi UX: Mode Biasa (Buffer) vs Mode Streaming
+Perbandingan fungsionalitas kedua mode dalam melayani interaksi chat pengguna.
+Indikator Penilaian Mode Biasa (Non-Stream / Buffered) Mode Streaming (Real-Time Stream)
+Waktu Respon Pertama Sangat lambat (Harus menunggu 100% teks selesai diproses) Super cepat (Teks langsung keluar dalam milidetik)
+Indikator Antarmuka Loading spinner berputar lama, membosankan Teks mengalir interaktif bergaya mengetik
+Efisiensi Memori RAM server menimbun string teks utuh sebelum kirim Data langsung dilempar per blok kecil (ramah memori)
+Penanganan Koneksi Koneksi HTTP standar sekali usai Koneksi HTTP tetap terbuka bertahap (*Keep-Alive*)
+Cocok untuk Fitur Kueri API backend, pencarian indeks, parsing JSON Obrolan interaktif (Chatbot), asisten kode editor
+RESPONSE STREAMING
+Implementasi Kode: Respons Streaming Laravel
+Gunakan 'response()->stream()' untuk memerintahkan
+server PHP memancarkan data secara bertahap.
+Gunakan 'withOptions(['stream' => true])' pada Laravel
+HTTP Client agar PHP menangkap potongan data saat
+tiba.
+Fungsi PHP 'ob_flush()' dan 'flush()' wajib dipanggil di
+dalam loop untuk memaksa buffer web server segera
+mengirimkan data ke browser.
+app/Http/Controllers/Api/TanyaAiController.php
+public function askStream(Request $request) {
+$prompt = $request->input('prompt');
+return response()->stream(function() use ($prompt) {
+$response = Http::withOptions(['stream' => true])
+->post('http://localhost:11434/api/generate', [
+'model' => 'qwen3:14b',
+'prompt' => $prompt,
+'stream' => true,
+]);
+$body = $response->toPsrResponse()->getBody();
+while (!$body->eof()) {
+$chunk = $body->read(1024); // Baca 1 KB data
+echo $chunk; // Kirim ke browser
+ob_flush(); flush(); // Kosongkan buffer segera
+}
+}, 200, ['Content-Type' => 'text/event-stream']);
+}
+RESPONSE STREAMING
+Praktik Industri Baik: Menangani Kegagalan LLM
+Server LLM adalah modul eksternal yang rentan mengalami
+kendala timeout, kehabisan RAM, atau crash sistem.
+Selalu pasang batas waktu 'Http::timeout(30)' agar server PHP
+Anda tidak menggantung selamanya.
+Tangkap error koneksi menggunakan block try-catch dan berikan
+umpan balik fallback berupa pesan ramah pengguna.
+Sediakan fallback alternatif (misal jika Ollama lokal mati, alihkan
+kueri secara otomatis ke Senopati AI ITS).
+DAFTAR KESALAHAN UMUM
+Lupa menjalankan service: 'ollama serve' belum
+dinyalakan sebelum aplikasi memanggil API.
+Tidak melakukan validasi input: Mengirimkan teks
+kosong atau karakter aneh yang membuat parser
+JSON pecah.
+Membuka banyak koneksi paralel: GPU laptop kelas
+bawah mengalami freeze akibat kueri bertumpuk.
+CONTOH SOAL PRAKTIK
+Contoh Soal 1: API Resource & apiResource Routing
+Skenario: Buat rute API, controller, dan resource untuk
+menyajikan data Model 'Tugas' ITS dalam format JSON.
+Rute didaftarkan di routes/api.php sehingga otomatis
+beralamat di '/api/tugas'.
+Mengembalikan koleksi data terformat rupiah
+menggunakan TugasResource.
+routes/api.php & TugasResource.php
+// 1. Rute di routes/api.php
+Route::apiResource('tugas', TugasApiController::class);
+// 2. app/Http/Resources/TugasResource.php
+class TugasResource extends JsonResource {
+public function toArray($request) {
+return [
+'id' => $this->id,
+'judul_tugas' => $this->judul,
+'nilai_akhir' => $this->nilai,
+'kategori' => $this->whenLoaded('kategori'),
+];
+}
+}
+CONTOH SOAL PRAKTIK
+Contoh Soal 2: API Authentication with Sanctum
+Skenario: Kunci endpoint API CRUD Tugas
+menggunakan middleware Sanctum agar hanya dapat
+diakses user sah.
+User yang melakukan login mengembalikan token
+plainTextToken.
+Grup rute API mengandalkan proteksi middleware
+'auth:sanctum'.
+routes/api.php & AuthApiController.php
+// 1. Penguncian Rute di routes/api.php
+Route::middleware('auth:sanctum')->group(function () {
+Route::apiResource('tugas', TugasApiController::class);
+});
+// 2. Potongan Login Controller mengembalikan token
+if (Hash::check($request->password, $user->password)) {
+$token = $user->createToken('its-secure-token')->plainTextToken;
+return response()->json(['token' => $token]);
+}
+CONTOH SOAL PRAKTIK
+Contoh Soal 3: Laravel HTTP Client to Ollama
+Skenario: Buat controller untuk mengirimkan instruksi
+prompt kustom ke model Ollama lokal.
+Menerima parameter 'prompt' lewat request POST.
+Menonaktifkan stream untuk menunggu hasil kueri utuh.
+app/Http/Controllers/OllamaController.php
+public function generate(Request $request) {
+$request->validate(['prompt' => 'required|string']);
+$res = Http::timeout(45)-
+>post('http://localhost:11434/api/generate', [
+'model' => 'qwen3:14b',
+'prompt' => $request->prompt,
+'stream' => false,
+]);
+return response()->json([
+'status' => 'success',
+'result' => $res->json('response')
+]);
+}
+CONTOH SOAL PRAKTIK
+Contoh Soal 4: SSE Response Streaming
+Skenario: Buat endpoint streaming teks yang
+mengirimkan token kata per kata secara langsung.
+Wajib melampirkan header event-stream.
+Mengalirkan data menggunakan PHP output buffer.
+app/Http/Controllers/StreamController.php
+public function stream(Request $request) {
+return response()->stream(function() {
+for ($i = 1; $i <= 10; $i++) {
+echo "data: Token kata ke-{$i}\n\n";
+ob_flush(); flush();
+usleep(200000); // Delay 200 milidetik
+}
+}, 200, [
+'Content-Type' => 'text/event-stream',
+'Cache-Control' => 'no-cache',
+]);
+}
+CONTOH SOAL PRAKTIK
+Contoh Soal 5: API Fallback & Retry Logic
+Skenario: Buat kodingan cerdas yang mengalihkan kueri
+ke server Senopati AI ITS apabila Ollama lokal down.
+Menerapkan retry maksimal 3 kali sebelum melempar
+kegagalan.
+Log error secara rapi ke file sistem Laravel.
+app/Http/Controllers/TanyaController.php
+public function askRobust(Request $request) {
+try {
+// Coba panggil Ollama Lokal
+$res = Http::timeout(10)-
+>post('http://localhost:11434/api/generate', [
+'model' => 'qwen3:14b', 'prompt' => $request->prompt,
+'stream' => false
+]);
+return response()->json(['result' => $res-
+>json('response')]);
+} catch (\Exception $e) {
+// Fallback panggil Senopati AI ITS
+Log::warning('Ollama down. Menggunakan Senopati AI ITS: ' .
+$e->getMessage());
+$resFallback = Http::timeout(20)-
+>post('https://senopati.its.ac.id/api/chat', [
+'prompt' => $request->prompt
+]);
+return response()->json(['result' => $resFallback-
+>json('result')]);
+}
+}
+BAGIAN 05
+Tugas Mandiri & Tantangan Mingguan
+Mengasah keterampilan merancang API terproteksi dan mengintegrasikan agen cerdas LLM.
+TUGAS MANDIRI & TANTANGAN
+Tugas Kelompok: Secure LLM Chat API Hub
+Visi Tugas: Setiap kelompok wajib membangun backend API hub
+terproteksi yang melayani interaksi chat cerdas ke LLM.
+Sistem ini akan bertindak sebagai 'otak backend' yang akan
+dipasangi antarmuka visual (Livewire) pada Pertemuan 12.
+Sistem wajib mengamankan endpoint kueri agar tidak
+dieksploitasi oleh pihak asing tanpa otentikasi token.
+Waktu Pengerjaan: 1 Minggu, dikerjakan secara berkelompok (6
+mahasiswa) untuk dipresentasikan di depan kelas.
+FOKUS UTAMA PROYEK
+Fungsionalitas: Membangun rute API teratur menerima
+input teks prompt.
+Integrasi: Memanggil Ollama lokal atau API Senopati
+AI ITS.
+Keamanan: Memproteksi endpoint menggunakan
+Laravel Sanctum.
+TUGAS MANDIRI & TANTANGAN
+Spesifikasi Teknis Wajib Proyek
+Rute API: POST '/api/chat-ai' yang wajib dikunci di bawah
+grup middleware 'auth:sanctum'.
+Form Request: Mengamankan masukan dengan validasi
+(prompt wajib berupa string, maksimal 1000 karakter).
+Database Logs: Menyimpan riwayat chat (User ID,
+Prompt, Jawaban AI, Model yang dipakai, Token yang
+terkonsumsi) di tabel database lokal.
+Standardisasi JSON: Mengembalikan respon terstruktur
+rapi dibungkus API Resource.
+Expected API Response (JSON)
+{
+"status": "success",
+"data": {
+"session_id": 12,
+"model_used": "qwen3:14b",
+"prompt": "Jelaskan middleware!",
+"ai_response": "Middleware adalah...",
+"timestamp": "2026-08-28 09:30:00"
+}
+}
+TUGAS MANDIRI & TANTANGAN
+Tantangan Tambahan / Challenge (Nilai A+)
+Challenge 1: Implementasikan Response Streaming (ServerSent Events) sehingga teks jawaban AI mengalir secara
+bertahap.
+Challenge 2: Gunakan Pola 'System Prompt Injection' untuk
+mengarahkan perilaku AI agar merespon sesuai dengan tema
+kelompok.
+Challenge 3: Terapkan skema fallback otomatis ke Senopati AI
+ITS apabila server Ollama lokal terdeteksi mati.
+CONTOH SYSTEM PROMPT TEMA
+Untuk Kelompok Security Scanner: 'Anda adalah agen
+siber ITS. Analisis kode berikut dan laporkan
+kerentanannya.'
+Untuk Kelompok Database Checker: 'Anda adalah
+DBA senior. Berikan rekomendasi indeks dari skema
+kueri berikut.'
+TUGAS MANDIRI & TANTANGAN
+Rubrik Evaluasi & Kriteria Penilaian Tugas
+Transparansi kriteria penilaian untuk menjamin obyektivitas evaluasi proyek kelompok.
+Komponen Penilaian Bobot Indikator Penilaian Utama (Rubrik)
+Fungsionalitas & Koneksi API
+LLM
+40% Rute API berjalan sukses, terhubung ke Ollama/Senopati AI,
+dan mengembalikan data JSON murni yang valid.
+Autentikasi & Validasi
+Sanctum
+20% Endpoint dikunci rapat oleh middleware Sanctum. Input
+disaring ketat lewat kelas FormRequest khusus.
+Logging & Riwayat DB 20% Seluruh kueri prompt dan jawaban AI sukses direkam ke
+dalam tabel database relasional.
+Keberhasilan Challenge A+ 10% Penerapan response streaming, custom system prompt tema,
+atau arsitektur fallback otomatis yang berjalan lancar.
+Kerapian Kode & Demo
+Pitching
+10% Kode mematuhi standar PSR-12, bersih, modular, serta
+presentasi tim kompak durasi 5 menit.
+TUGAS MANDIRI & TANTANGAN
+Ketentuan Pengumpulan & Sesi Demo
+Kode program wajib diunggah ke repositori GitHub kelompok
+masing-masing.
+Wajib memasang konfigurasi '.gitignore' bawaan Laravel agar
+berkas '.env' dan folder 'vendor/' tidak bocor.
+Sediakan file 'README.md' yang mendokumentasikan API
+Contract (struktur URL, parameter request, dan contoh output
+JSON).
+Batas Waktu: H-1 sebelum perkuliahan Pertemuan 11 dimulai via
+LMS ITS.
+Mekanisme Kelas: Setiap kelompok akan maju
+mempresentasikan hasil kodingan & demo API via Postman
+maksimal selama 5 menit.
+DAFTAR PERIKSA SEBELUM
+KUMPUL
+Apakah file .env sudah dihapus dari Git history?
+Apakah API sudah diuji mengembalikan error 401 jika
+dipanggil tanpa token?
+Apakah library Sanctum dan tabel migrations sudah
+disertakan?
+LOOKING AHEAD - PERTEMUAN 12
+Terima Kasih & Selamat Belajar!
+Mata Kuliah Pemrograman Berbasis Kerangka Kerja (PBKK) • Teknik Informatika ITS
+Paruh Kedua
+Memulai Babak Baru AI
+▸ Menghubungkan Laravel ke dunia
+kognitif cerdas.
+▸ Meninggalkan data statis beralih ke
+logika reasoning dinamis.
+▸ Membangun fondasi teknologi
+termutakhir industri saat ini.
+Minggu Depan
+Materi Pertemuan 12
+▸ Mempelajari konsep Reactive
+Components dengan Livewire.
+▸ Membangun antarmuka kotak chat
+obrolan reaktif.
+▸ Sinkronisasi input prompt tanpa refresh
+browser murni.
+Pesan Dosen
+Tips Pekan Ini
+▸ Pastikan laptop Anda siap menjalankan
+Ollama di latar belakang.
+▸ Eksplorasi dokumentasi standardisasi
+kueri HTTP Client.
+▸ Mulailah mencicil rancangan database
+kelompok Anda.
