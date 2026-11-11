@@ -26,7 +26,13 @@ class AuthController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Kredensial salah.'], 401);
         }
 
-        $token = $user->createToken($data['device_name'] ?? 'agent-access-token');
+        // config('sanctum.expiration') is only checked on use; pass it here too so expires_at is stored and shown
+        $minutes = config('sanctum.expiration');
+        $token = $user->createToken(
+            $data['device_name'] ?? 'agent-access-token',
+            ['*'],
+            $minutes ? now()->addMinutes((int) $minutes) : null,
+        );
 
         return response()->json([
             'status' => 'success',
