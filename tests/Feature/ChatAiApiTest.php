@@ -82,6 +82,8 @@ class ChatAiApiTest extends TestCase
             ->assertUnprocessable()
             ->assertJsonPath('errors.prompt.0', 'Prompt maksimal 1000 karakter.');
         $this->postJson('/api/chat-ai', ['prompt' => 'x', 'theme' => 'hacker'])->assertJsonValidationErrors('theme');
+        $this->postJson('/api/chat-ai', ['prompt' => 'x', 'think' => 'mungkin'])
+            ->assertJsonPath('errors.think.0', 'Mode berpikir harus true atau false.');
         Http::assertNothingSent();
     }
 
@@ -99,6 +101,7 @@ class ChatAiApiTest extends TestCase
             ->assertJsonPath('data.ai_response', 'Middleware adalah...')
             ->assertJsonPath('data.tokens.total', 20)
             ->assertJsonStructure(['status', 'data' => ['session_id', 'model_used', 'prompt', 'ai_response', 'timestamp']])
+            ->assertJsonPath('data.think', false) // not sent -> LLM_THINK default (false)
             ->assertJsonMissingPath('data.user_id');
 
         $this->assertDatabaseHas('chat_logs', [
@@ -112,7 +115,21 @@ class ChatAiApiTest extends TestCase
             && $r['model'] === 'qwen3:14b'
             && $r['messages'][0]['role'] === 'system'
             && $r['messages'][0]['content'] === config('llm.themes.prompt_engineer')
+            && $r['think'] === false
             && $r['stream'] === false);
+    }
+
+    public function test_think_flag_is_sent_to_gateway_and_logged(): void
+    {
+        Sanctum::actingAs(User::factory()->create());
+        Http::fake(['senopati.test/*' => Http::response($this->completion('Jakarta', 'qwen3:14b'))]);
+
+        $this->postJson('/api/chat-ai', ['prompt' => 'Ibu kota?', 'think' => true])
+            ->assertCreated()
+            ->assertJsonPath('data.think', true);
+
+        Http::assertSent(fn (Request $r) => $r['think'] === true);
+        $this->assertDatabaseHas('chat_logs', ['think' => true]);
     }
 
     public function test_falls_back_to_ollama_when_senopati_is_down(): void
@@ -156,7 +173,10 @@ class ChatAiApiTest extends TestCase
     public function test_stream_sends_sse_events_and_logs_full_text(): void
     {
         Sanctum::actingAs(User::factory()->create());
+        // Same shape as the real gateway in reasoning mode: reasoning_content chunks first, then content
         $sse = implode('', [
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"RAHASIA-PIKIRAN\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" lanjut\"}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"content\":\"Halo \"}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"content\":\"dunia\"}}]}\n\n",
             "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\n",
@@ -164,13 +184,18 @@ class ChatAiApiTest extends TestCase
         ]);
         Http::fake(['senopati.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream'])]);
 
-        $response = $this->postJson('/api/chat-ai/stream', ['prompt' => 'Sapa aku']);
+        $response = $this->postJson('/api/chat-ai/stream', ['prompt' => 'Sapa aku', 'think' => true]);
 
         $response->assertOk()->assertHeader('Content-Type', 'text/event-stream; charset=UTF-8');
         $body = $response->streamedContent();
+        $this->assertSame(1, substr_count($body, 'event: thinking'), 'thinking is signalled exactly once');
         $this->assertStringContainsString("event: token\ndata: {\"delta\":\"Halo \"}", $body);
         $this->assertStringContainsString('event: done', $body);
-        $this->assertDatabaseHas('chat_logs', ['response' => 'Halo dunia', 'total_tokens' => 7, 'status' => 'success']);
+        // The model's reasoning text must never reach the client or the database
+        $this->assertStringNotContainsString('RAHASIA-PIKIRAN', $body);
+        $this->assertDatabaseHas('chat_logs', [
+            'response' => 'Halo dunia', 'think' => true, 'total_tokens' => 7, 'status' => 'success',
+        ]);
     }
 
     public function test_history_only_lists_own_logs(): void

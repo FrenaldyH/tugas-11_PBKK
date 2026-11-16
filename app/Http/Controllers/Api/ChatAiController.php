@@ -27,7 +27,7 @@ class ChatAiController extends Controller
         $messages = $this->llm->messages($request->prompt, $request->theme());
 
         try {
-            $result = $this->llm->chat($messages);
+            $result = $this->llm->chat($messages, $request->think());
         } catch (Throwable $e) {
             $this->record($request, ['status' => 'failed']);
 
@@ -44,17 +44,24 @@ class ChatAiController extends Controller
         return response()->json(['status' => 'success', 'data' => new ChatLogResource($log)], 201);
     }
 
-    // POST /api/chat-ai/stream: Server-Sent Events. Events: token {delta}, done {status,data}, error {message}.
+    // POST /api/chat-ai/stream: Server-Sent Events.
+    // Events: thinking {thinking} (once, only in reasoning mode), token {delta}, done {status,data}, error {message}.
     public function stream(ChatAiRequest $request): StreamedResponse
     {
         $messages = $this->llm->messages($request->prompt, $request->theme());
 
         return response()->stream(function () use ($request, $messages) {
             $text = '';
-            $stream = $this->llm->stream($messages);
+            $stream = $this->llm->stream($messages, $request->think());
 
             try {
-                foreach ($stream as $delta) {
+                // The generator key is the event type: "thinking" or "token"
+                foreach ($stream as $event => $delta) {
+                    if ($event === 'thinking') {
+                        $this->sendEvent('thinking', ['thinking' => true]);
+
+                        continue;
+                    }
                     $text .= $delta;
                     $this->sendEvent('token', ['delta' => $delta]);
                 }
@@ -94,6 +101,7 @@ class ChatAiController extends Controller
         return $request->user()->chatLogs()->create([
             'prompt' => $request->prompt,
             'theme' => $request->theme(),
+            'think' => $request->think(),
         ] + $fields);
     }
 

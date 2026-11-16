@@ -16,6 +16,10 @@ return [
 
     'temperature' => (float) env('LLM_TEMPERATURE', 0.7),
 
+    // Reasoning ("thinking") mode. Off = much faster answers and an immediate first streamed word;
+    // on = may help hard tasks (e.g. the evaluator theme) but costs many extra tokens and seconds.
+    'think' => (bool) env('LLM_THINK', false),
+
     'providers' => [
         // ITS campus LLM gateway (primary). The API key goes in .env, never in code.
         'senopati' => [

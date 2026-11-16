@@ -19,6 +19,7 @@ class ChatAiRequest extends FormRequest
         return [
             'prompt' => ['required', 'string', 'max:1000'],
             'theme' => ['sometimes', 'string', Rule::in(array_keys(config('llm.themes')))],
+            'think' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -29,6 +30,7 @@ class ChatAiRequest extends FormRequest
             'prompt.string' => 'Prompt harus berupa teks.',
             'prompt.max' => 'Prompt maksimal 1000 karakter.',
             'theme.in' => 'Tema tidak dikenal. Pilihan: '.implode(', ', array_keys(config('llm.themes'))).'.',
+            'think.boolean' => 'Mode berpikir harus true atau false.',
         ];
     }
 
@@ -36,5 +38,11 @@ class ChatAiRequest extends FormRequest
     public function theme(): string
     {
         return $this->input('theme', 'default');
+    }
+
+    // Reasoning mode for this request; falls back to LLM_THINK when not sent.
+    public function think(): bool
+    {
+        return $this->boolean('think', (bool) config('llm.think'));
     }
 }

@@ -15,6 +15,7 @@ class ChatLogResource extends JsonResource
             'status' => $this->status,
             'provider' => $this->provider,
             'model_used' => $this->model,
+            'think' => $this->think,
             'theme' => $this->theme,
             'prompt' => $this->prompt,
             'ai_response' => $this->response,

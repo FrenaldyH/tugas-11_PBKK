@@ -24,13 +24,13 @@ class LlmClient
     }
 
     // Wait for the full answer. Returns provider, model, content and token usage.
-    public function chat(array $messages): array
+    public function chat(array $messages, bool $think): array
     {
         foreach ($this->providers() as $name => $provider) {
             try {
                 $json = $this->request($provider)
                     ->retry(config('llm.retries'), 200, fn (Throwable $e) => $this->isTransient($e))
-                    ->post('/chat/completions', $this->payload($provider, $messages, false))
+                    ->post('/chat/completions', $this->payload($provider, $messages, false, $think))
                     ->throw() // retry() only throws itself when tries > 1
                     ->json();
 
@@ -48,15 +48,16 @@ class LlmClient
         throw new RuntimeException('Semua server AI tidak dapat dihubungi.');
     }
 
-    // Stream the answer. Yields text pieces; the generator's return value holds provider/model/usage.
+    // Stream the answer. Yields event => text pairs: "thinking" => '' once when the model starts reasoning,
+    // then "token" => piece for each answer piece. The generator's return value holds provider/model/usage.
     // Fallback only happens before the first piece arrives; a mid-stream failure is thrown.
-    public function stream(array $messages): Generator
+    public function stream(array $messages, bool $think): Generator
     {
         foreach ($this->providers() as $name => $provider) {
             try {
                 $response = $this->request($provider)
                     ->withOptions(['stream' => true])
-                    ->post('/chat/completions', $this->payload($provider, $messages, true))
+                    ->post('/chat/completions', $this->payload($provider, $messages, true, $think))
                     ->throw();
             } catch (Throwable $e) {
                 Log::warning("LLM provider [$name] failed, trying next: ".$e->getMessage());
@@ -72,11 +73,12 @@ class LlmClient
         throw new RuntimeException('Semua server AI tidak dapat dihubungi.');
     }
 
-    // Parse "data: {...}" lines from an SSE body, yield each content delta, return usage.
+    // Parse "data: {...}" lines from an SSE body, yield events (see stream()), return usage.
     private function readSse($body): Generator
     {
         $buffer = '';
         $usage = [];
+        $thinking = false;
 
         while (! $body->eof()) {
             $buffer .= $body->read(1024);
@@ -97,9 +99,15 @@ class LlmClient
 
                 $chunk = json_decode($data, true) ?? [];
                 $usage = $chunk['usage'] ?? $usage;
-                $delta = $chunk['choices'][0]['delta']['content'] ?? '';
-                if ($delta !== '') {
-                    yield $delta;
+                $delta = $chunk['choices'][0]['delta'] ?? [];
+
+                // Signal reasoning once; its text is never forwarded (no chain-of-thought to the user)
+                if (! $thinking && ($delta['reasoning_content'] ?? '') !== '') {
+                    $thinking = true;
+                    yield 'thinking' => '';
+                }
+                if (($delta['content'] ?? '') !== '') {
+                    yield 'token' => $delta['content'];
                 }
             }
         }
@@ -128,12 +136,14 @@ class LlmClient
     }
 
     // Chat Completion request body.
-    private function payload(array $provider, array $messages, bool $stream): array
+    private function payload(array $provider, array $messages, bool $stream, bool $think): array
     {
         return array_filter([
             'model' => $provider['model'],
             'messages' => $messages,
             'temperature' => config('llm.temperature'),
+            // qwen3 "thinks" before answering unless told not to; the gateway forwards this flag
+            'think' => $think,
             'stream' => $stream,
             // Ask for token usage in the final stream chunk
             'stream_options' => $stream ? ['include_usage' => true] : null,
