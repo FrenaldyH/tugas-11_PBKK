@@ -2,7 +2,7 @@
 
 Backend API terproteksi untuk **PromptLab**, final project platform Agentic AI **Kelompok 1** ("Local-first Agentic
 Prompt, Context & Memory Optimization"). Laravel menerima prompt, meneruskannya ke LLM kampus
-**Senopati AI ITS** (Ollama lokal opsional sebagai fallback), mencatat riwayatnya ke database, dan mengembalikan JSON
+**Senopati AI ITS** (dengan fallback otomatis ke Ollama lokal), mencatat riwayatnya ke database, dan mengembalikan JSON
 yang dibungkus API Resource. Semua endpoint chat dikunci token **Laravel Sanctum**. Antarmuka Livewire menyusul di
 Pertemuan 12; untuk sekarang tersedia halaman **playground** di `/` untuk demo (desain: [`notes/DESIGN.md`](notes/DESIGN.md)).
 
@@ -17,7 +17,7 @@ Pertemuan 12; untuk sekarang tersedia halaman **playground** di `/` untuk demo (
 | Terhubung ke Senopati AI ITS | [`LlmClient`](app/Services/LlmClient.php), konfigurasi di [`config/llm.php`](config/llm.php) |
 | Challenge 1: streaming SSE | `POST /api/chat-ai/stream` |
 | Challenge 2: system prompt per tema | `theme`: `default`, `prompt_engineer`, `context_engineer`, `evaluator` (lihat [Tema agent](#tema-agent-promptlab)) |
-| Challenge 3: fallback otomatis | opsional: `LLM_PROVIDER_ORDER=senopati,ollama`; retry hanya untuk error koneksi/5xx |
+| Challenge 3: fallback otomatis | Senopati → Ollama lokal (`LLM_PROVIDER_ORDER`); jalur percobaan tampil di respons (`attempts`) dan di playground (lihat [Alur fallback](#alur-fallback-challenge-3)) |
 | `.env` & `vendor/` tidak ikut Git | `.gitignore` bawaan Laravel |
 
 ## Instalasi
@@ -48,22 +48,33 @@ curl https://senopati.its.ac.id/llm-gateway/v1/chat/completions \
 
 Akun demo: `demo@promptlab.test` / `password`.
 
-**Opsional, fallback lokal:** jalankan `ollama pull qwen3:14b` dan `ollama serve`, lalu set
-`LLM_PROVIDER_ORDER=senopati,ollama`. Kalau Senopati tidak bisa dihubungi, jawaban otomatis diambil dari Ollama.
+**Fallback lokal (Challenge 3):** jalankan Ollama dan isi `OLLAMA_MODEL` dengan model dari `ollama list`
+(model 7B kuantisasi Q4 muat di GPU 6 GB):
+
+```bash
+sudo systemctl start ollama        # bila Ollama terpasang sebagai service; atau: ollama serve
+ollama list                        # pilih nama model untuk OLLAMA_MODEL
+ollama run NAMA_MODEL "halo"       # "pemanasan": memuat model ke GPU sebelum demo
+```
+
+Pemanasan penting: model yang belum dimuat butuh ±40 detik (*cold start*) pada jawaban pertama, dan Ollama melepas
+model dari GPU setelah 5 menit tidak dipakai. Bila Ollama mati, fallback tetap dicoba lalu gagal dengan alasan
+`tidak dapat dihubungi`.
 
 ### Variabel `.env`
 
 | Variabel | Default | Arti |
 |---|---|---|
-| `LLM_PROVIDER_ORDER` | `senopati` | urutan provider; yang berikutnya = fallback (mis. `senopati,ollama`) |
+| `LLM_PROVIDER_ORDER` | `senopati,ollama` | urutan provider; yang berikutnya = fallback |
 | `LLM_TIMEOUT` | `60` | detik per request ke LLM |
-| `LLM_RETRIES` | `3` | percobaan per provider (hanya untuk error koneksi / HTTP 5xx) |
+| `LLM_RETRIES` | `3` | percobaan per provider (hanya untuk koneksi putus / HTTP 5xx; timeout tidak diulang) |
 | `LLM_TEMPERATURE` | `0.7` | kreativitas jawaban |
 | `LLM_THINK` | `false` | mode berpikir `qwen3`; `false` = jawaban jauh lebih cepat dan kata pertama streaming langsung muncul |
 | `SENOPATI_BASE_URL` | `https://senopati.its.ac.id/llm-gateway/v1` | gateway LLM kampus, format Chat Completion OpenAI |
 | `SENOPATI_MODEL` | `qwen3:14b` | model di gateway Senopati |
 | `SENOPATI_API_KEY` | kosong | **wajib diisi** token ITS; dikirim sebagai `Authorization: Bearer` |
-| `OLLAMA_BASE_URL` / `OLLAMA_MODEL` | `http://localhost:11434/v1` / `qwen3:14b` | hanya dipakai bila `ollama` ada di `LLM_PROVIDER_ORDER` |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | endpoint OpenAI-compatible bawaan Ollama |
+| `OLLAMA_MODEL` | `qwen3:14b` | **harus** model yang ada di `ollama list` (mis. `deephat:latest`) |
 | `SANCTUM_EXPIRATION` | `1440` | umur token (menit) |
 
 **Kalau `/api/chat-ai` menjawab 503**, buka `storage/logs/laravel.log`:
@@ -104,6 +115,7 @@ Kirim prompt, tunggu jawaban lengkap. Dibatasi 20 request/menit per user.
 | `prompt` | string | wajib, maks 1000 karakter |
 | `theme` | string | opsional: `default` (bawaan), `prompt_engineer`, `context_engineer`, `evaluator` |
 | `think` | boolean | opsional: mode berpikir `qwen3` untuk request ini; bila tidak dikirim, ikut `LLM_THINK` |
+| `simulate_primary_down` | boolean | opsional, **hanya berlaku bila `APP_DEBUG=true`**: provider pertama dibuat gagal untuk menguji fallback |
 
 ```json
 // Request
@@ -123,8 +135,17 @@ Kirim prompt, tunggu jawaban lengkap. Dibatasi 20 request/menit per user.
     "ai_response": "Middleware adalah...",
     "tokens": { "prompt": 30, "completion": 120, "total": 150 },
     "timestamp": "2026-08-28 09:30:00"
-  }
+  },
+  "attempts": [
+    { "provider": "senopati", "ok": true, "reason": null }
+  ]
 }
+
+// 201 Created setelah fallback: data.provider = "ollama", dan
+"attempts": [
+  { "provider": "senopati", "ok": false, "reason": "timeout 60 s" },
+  { "provider": "ollama", "ok": true, "reason": null }
+]
 
 // 422 Unprocessable Content
 { "message": "Prompt maksimal 1000 karakter.", "errors": { "prompt": ["Prompt maksimal 1000 karakter."] } }
@@ -137,6 +158,9 @@ Kirim prompt, tunggu jawaban lengkap. Dibatasi 20 request/menit per user.
 Body sama dengan `/chat-ai`. Respons `Content-Type: text/event-stream` berisi event berikut:
 
 ```text
+event: attempt
+data: {"provider":"senopati","ok":true,"reason":null}
+
 event: thinking
 data: {"thinking":true}
 
@@ -201,17 +225,31 @@ daftar yang sama, jadi ikut berubah otomatis.
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | unsigned int, nullable | dari field `usage` LLM |
 | `created_at` / `updated_at` | timestamp | indeks `(user_id, created_at)` untuk riwayat |
 
-## Alur fallback
+## Alur fallback (Challenge 3)
 
-1. Coba provider pertama (`senopati`). Error koneksi atau HTTP 5xx → ulangi sampai `LLM_RETRIES` kali (jeda 200 ms).
-   Error 4xx (mis. token salah) tidak diulang karena hasilnya akan sama.
-2. Masih gagal → catat `warning` di `storage/logs/laravel.log`, lanjut ke provider berikutnya bila ada (`ollama`, hanya jika tercantum di `LLM_PROVIDER_ORDER`).
+1. Coba provider pertama (`senopati`). Koneksi putus atau HTTP 5xx → ulangi sampai `LLM_RETRIES` kali (jeda 200 ms).
+   - Error 4xx (mis. token salah) **tidak** diulang karena hasilnya akan sama.
+   - Timeout **tidak** diulang: satu percobaan sudah memakai seluruh `LLM_TIMEOUT`, jadi mengulang hanya melipatgandakan
+     waktu tunggu. Langsung pindah ke provider berikutnya.
+2. Masih gagal → catat pesan lengkap di `storage/logs/laravel.log`, lanjut ke provider berikutnya (`ollama`).
 3. Semua gagal → HTTP 503 + baris log `status = failed`.
+
+Setiap percobaan dilaporkan sebagai `attempts` (`/chat-ai`) atau event `attempt` (`/chat-ai/stream`, terkirim sebelum
+jawaban mulai mengalir). Alasan yang dikirim ke klien sengaja singkat: `HTTP 401`, `timeout 60 s`,
+`tidak dapat dihubungi`, `disimulasikan mati`. Pesan error mentah hanya ada di log.
+
+**Menguji di playground** (`APP_DEBUG=true`): pilih *Uji fallback → Simulasikan Senopati mati*. Provider pertama dibuat
+gagal **sebelum** request dikirim, lalu jalur fallback yang sebenarnya berjalan. Di bawah jawaban tampil
+`JALUR PROVIDER  SENOPATI GAGAL: DISIMULASIKAN MATI → OLLAMA BERHASIL`, dan kolom Provider di riwayat berisi `ollama`.
+Saat `APP_DEBUG=false` tombol ini tidak tampil dan field `simulate_primary_down` diabaikan API.
+
+**Bukti nyata (2026-11-17):** saat gateway Senopati menggantung (koneksi TCP diterima, tetapi tidak ada jawaban), request
+fallback otomatis ke Ollama setelah 60 detik: `SENOPATI GAGAL: TIMEOUT 60 S → OLLAMA BERHASIL`, model `deephat:latest`.
 
 ## Test dan standar kode
 
 ```bash
-php artisan test          # 12 test: login/logout, 401, 422, sukses + log DB, system prompt, fallback, 401 tidak di-retry, 503, SSE, riwayat
+php artisan test          # 18 test: auth, validasi, log DB, tema, think, fallback + simulasi, timeout/401 tidak di-retry, 503, SSE, riwayat
 ./vendor/bin/pint --test  # PSR-12 (pint.json)
 ```
 
@@ -224,7 +262,7 @@ LLM dipalsukan dengan `Http::fake()`, jadi test tidak butuh token Senopati maupu
 | Fungsionalitas & koneksi LLM (40%) | `/api/chat-ai`, `LlmClient`, test `chat_returns_resource_and_logs_to_database` |
 | Autentikasi & validasi Sanctum (20%) | `auth:sanctum`, `ChatAiRequest`, test `chat_requires_token...`, `prompt_is_validated` |
 | Logging & riwayat DB (20%) | `chat_logs`, `/api/chat-ai/history`, sukses dan gagal sama-sama dicatat |
-| Challenge A+ (10%) | streaming SSE, 4 tema system prompt, fallback opsional Senopati → Ollama |
+| Challenge A+ (10%) | streaming SSE, 4 tema system prompt, fallback otomatis Senopati → Ollama lokal (terbukti nyata dan teruji) |
 | Kerapian kode (10%) | Pint PSR-12, satu service untuk semua provider, komentar per fungsi |
 
 ## Demo Postman (5 menit)
@@ -235,6 +273,7 @@ LLM dipalsukan dengan `Http::fake()`, jadi test tidak butuh token Senopati maupu
 4. `POST /api/chat-ai` dengan `theme: prompt_engineer` dan prompt yang sengaja ambigu
    (mis. "Dokumentasikan API login") → 201 + JSON berisi analisis dan saran prompt.
 5. `POST /api/chat-ai/stream` → event mengalir satu per satu.
-6. Kosongkan sementara `SENOPATI_API_KEY`, ulangi langkah 4 → 503 + baris log `failed` (bukti error ditangani).
-   Bila fallback Ollama aktif (`LLM_PROVIDER_ORDER=senopati,ollama`), putuskan internet → `provider: ollama`.
+6. Fallback: kirim `"simulate_primary_down": true` (atau di playground pilih *Simulasikan Senopati mati*) →
+   `data.provider: ollama` dan `attempts` menunjukkan Senopati gagal → Ollama berhasil. Versi nyata: kosongkan
+   `SENOPATI_API_KEY` (alasan `HTTP 401`) atau putuskan internet. Matikan juga Ollama → 503 + baris log `failed`.
 7. `GET /api/chat-ai/history` → semua percobaan tercatat.

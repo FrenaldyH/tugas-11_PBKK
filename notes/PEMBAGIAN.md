@@ -26,7 +26,7 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 2. Middleware `throttle:20,1` membatasi 20 request per menit per user.
 3. Laravel membuat `ChatAiRequest` dan memvalidasi input. Kalau gagal → 422, controller tidak dijalankan → **Bagian 2**.
 4. `ChatAiController@store` meminta `LlmClient` menyusun pesan: system prompt tema + prompt user → **Bagian 6**.
-5. `LlmClient::chat()` memanggil gateway Senopati AI ITS. Kalau gagal → retry → fallback (opsional) → **Bagian 5**.
+5. `LlmClient::chat()` memanggil gateway Senopati AI ITS. Kalau gagal → retry → fallback ke Ollama lokal → **Bagian 5**.
 6. Hasil dicatat ke tabel `chat_logs` → **Bagian 3**.
 7. Baris log dibungkus `ChatLogResource` dan dikirim sebagai JSON 201 → **Bagian 4**.
 
@@ -177,22 +177,33 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 ## Bagian 5 — Integrasi LLM (Senopati) & fallback (Challenge 3)
 
 **File:** `config/llm.php` (`order`, `providers`, `timeout`, `retries`, `temperature`) · `app/Services/LlmClient.php`
-(`chat`, `providers`, `request`, `payload`, `isTransient`).
+(`chat`, `attempts`, `providers`, `request`, `payload`, `fail`, `reason`, `isTransient`) · bagian "Uji fallback" dan
+`renderRoute()` di `resources/views/playground.blade.php`.
 
 **Cara kerja**
 - Provider utama adalah **Senopati AI ITS**, gateway LLM kampus di
   `https://senopati.its.ac.id/llm-gateway/v1`, model `qwen3:14b`. Request-nya sama persis dengan contoh `curl` dari
   kampus: `POST {base_url}/chat/completions`, header `Authorization: Bearer <token>`, body `model` + `messages`.
 - `request()` memasang token dari `SENOPATI_API_KEY` dengan `withToken()`, yang menghasilkan header Bearer.
-- Ollama lokal tersedia sebagai **fallback opsional**. Ollama punya endpoint dengan format yang sama di `/v1`, jadi satu
-  kode melayani dua provider. Default-nya mati; aktifkan dengan `LLM_PROVIDER_ORDER=senopati,ollama`.
+- **Fallback (Challenge 3): Ollama lokal** di laptop (`http://localhost:11434/v1`, model dari `OLLAMA_MODEL`, mis.
+  `deephat:latest`). Ollama punya endpoint dengan format yang sama dengan Senopati, jadi satu kode melayani dua
+  provider. Urutannya diatur `LLM_PROVIDER_ORDER=senopati,ollama`.
 - `providers()` mengurutkan provider sesuai `LLM_PROVIDER_ORDER`, dan melewati provider yang URL/model-nya kosong.
 - `chat()` mencoba provider satu per satu:
   1. Kirim request dengan `timeout(60)`.
-  2. Kalau gagal, ulangi sampai `LLM_RETRIES` kali, **hanya** untuk error yang mungkin sembuh (`isTransient`): koneksi
-     putus/timeout atau HTTP 5xx. Error 4xx (mis. token Senopati salah) tidak diulang karena hasilnya akan sama.
-  3. Masih gagal → tulis `Log::warning`, lanjut ke provider berikutnya.
-  4. Semua gagal → lempar `RuntimeException`; controller menjawab **503**.
+  2. Kalau gagal, ulangi sampai `LLM_RETRIES` kali, **hanya** untuk error yang bisa sembuh cepat (`isTransient`):
+     koneksi putus atau HTTP 5xx. Error 4xx (mis. token salah) tidak diulang karena hasilnya akan sama. **Timeout juga
+     tidak diulang**, karena satu percobaan sudah menghabiskan seluruh `LLM_TIMEOUT`.
+  3. Masih gagal → `fail()` menulis pesan lengkap ke log, mencatat percobaan di `attempts`, lalu lanjut ke Ollama.
+  4. Semua gagal → lempar `RuntimeException`; controller menjawab **503** (tetap menyertakan `attempts`).
+- **Jalur percobaan (`attempts`)**: setiap provider yang dicoba dicatat sebagai `{provider, ok, reason}` dan dikirim ke
+  klien (`attempts` di JSON, event `attempt` saat streaming). `reason()` sengaja meringkas error menjadi `HTTP 401`,
+  `timeout 60 s`, `tidak dapat dihubungi`, atau `disimulasikan mati`, supaya URL atau pesan internal gateway tidak bocor
+  ke klien. Timeout dikenali dari teks error **atau** dari lamanya percobaan (≥90% `LLM_TIMEOUT`), karena di mode
+  streaming Guzzle melaporkan timeout dengan pesan generik "Connection refused".
+- **Simulasi** (`simulate_primary_down`): provider pertama sengaja dibuat gagal **sebelum** request dikirim, lalu jalur
+  fallback yang asli berjalan. Hanya berlaku bila `APP_DEBUG=true` (`ChatAiRequest::simulatePrimaryDown()`), jadi
+  tidak bisa dipakai orang luar di server produksi.
 - `->throw()` ditulis eksplisit karena `retry()` Laravel hanya melempar error sendiri bila jumlah percobaan > 1. Tanpa
   baris ini, dengan `LLM_RETRIES=1`, respons 500 bisa tercatat sebagai "sukses" dengan jawaban kosong.
 
@@ -210,19 +221,30 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
   | `/no_think` di system prompt | 2,7 s | 128 (masih berpikir, sakelar ini tidak berpengaruh di gateway ini) |
   | `"think": false` | 0,7 s | 4 |
 
-**Batas yang perlu jujur diakui:** bila server *menggantung* (bukan mati), satu provider bisa menunggu sampai
-`timeout × retries` = 60 × 3 = ±3 menit sebelum fallback. Server yang mati (*connection refused*) gagal seketika.
-Untuk demo, turunkan `LLM_TIMEOUT` dan/atau `LLM_RETRIES` di `.env`. Karena Senopati diakses lewat internet,
-pastikan koneksi stabil saat presentasi.
+**Batas yang perlu jujur diakui**
+- Bila Senopati *menggantung* (koneksi diterima tetapi tidak menjawab), fallback baru terjadi setelah satu
+  `LLM_TIMEOUT` (60 s). Ini terjadi sungguhan pada 2026-11-17: `SENOPATI GAGAL: TIMEOUT 60 S → OLLAMA BERHASIL`.
+  Untuk demo, turunkan `LLM_TIMEOUT`, atau pakai tombol simulasi supaya fallback terjadi seketika.
+- *Cold start* Ollama: jawaban pertama setelah model dilepas dari GPU butuh ±44 s (terukur di RTX 4050). Jalankan
+  `ollama run NAMA_MODEL "halo"` sebelum presentasi. Setelah model dimuat, jawaban singkat ±0,5 s.
+- Model fallback (`deephat`, keluarga qwen2 7B) berbeda dari Senopati (`qwen3:14b`), jadi gaya dan kualitas
+  jawabannya bisa berbeda. Itu sebabnya `model_used` selalu dicatat.
 
 **Test:**
 - `test_chat_returns_resource_and_logs_to_database`: URL, header Bearer, model, dan isi `messages` dicek sama dengan
   contoh `curl` kampus.
-- `test_falls_back_to_ollama_when_senopati_is_down`: Senopati dibuat gagal koneksi, lalu Ollama yang menjawab.
+- `test_falls_back_to_ollama_when_senopati_is_down`: Senopati gagal koneksi, Ollama menjawab, `attempts` benar.
+- `test_simulated_primary_outage_falls_back_in_debug_mode`: simulasi aktif, dan Senopati **tidak pernah** dihubungi.
+- `test_simulation_is_ignored_when_debug_is_off`: pengaman produksi.
+- `test_timeout_is_not_retried_and_falls_back`: dengan `LLM_RETRIES=3`, Senopati hanya dipanggil sekali.
+- `test_stream_timeout_is_recognised_by_elapsed_time` dan `test_stream_reports_fallback_path_before_tokens`.
 - `test_wrong_senopati_token_is_not_retried`: 401 hanya dikirim sekali, walau retry diaktifkan.
 - `test_returns_503_and_logs_failure_when_all_providers_fail`.
 
 **Kemungkinan pertanyaan**
+- *Bagaimana membuktikan fallback saat demo?* Di playground pilih *Simulasikan Senopati mati* lalu kirim prompt. Di bawah
+  jawaban muncul `SENOPATI GAGAL: DISIMULASIKAN MATI → OLLAMA BERHASIL`, dan riwayat mencatat provider `ollama`. Versi
+  tanpa simulasi: kosongkan `SENOPATI_API_KEY` (alasan `HTTP 401`).
 - *Kenapa timeout wajib?* LLM bisa berpikir puluhan detik. Tanpa batas, proses PHP menggantung dan menghabiskan worker
   server.
 - *Kalau token Senopati salah, apa yang terjadi?* Gateway menjawab 401. Error ini tidak di-retry, lalu API kita
