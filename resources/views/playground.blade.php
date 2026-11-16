@@ -172,7 +172,7 @@
                         <button type="button" class="tab" data-value="false" aria-pressed="{{ config('llm.think') ? 'false' : 'true' }}">Mati</button>
                         <button type="button" class="tab" data-value="true" aria-pressed="{{ config('llm.think') ? 'true' : 'false' }}">Aktif</button>
                     </div>
-                    <div class="field-foot"><span class="helper" id="thinkHelp">Aktif: model menalar dulu. Bisa lebih matang untuk tugas berat, tetapi jauh lebih lambat dan boros token.</span></div>
+                    <div class="field-foot"><span class="helper" id="thinkHelp">Aktif: model menalar dulu. Bisa lebih matang untuk tugas berat, tetapi jauh lebih lambat dan boros token. Hanya berpengaruh pada model yang mendukung (qwen3 di Senopati); model Ollama lokal mengabaikannya.</span></div>
                 </div>
                 @if (config('app.debug'))
                     {{-- Challenge 3 test switch; the API also ignores it unless APP_DEBUG=true --}}

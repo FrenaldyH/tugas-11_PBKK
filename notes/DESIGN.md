@@ -160,8 +160,8 @@ eyebrow & header tabel `caption-md` huruf kapital. `display-xl` 48px tidak dipak
 | Panel jawaban | baru | latar `#1a1a1a`, teks putih mono, caret hijau saat streaming |
 | Indikator tunggu | baru | teks `on-dark-mute` dengan penghitung detik; tidak menampilkan chain-of-thought |
 | Baris meta | NVIDIA badge-tag | `PROVIDER` `MODEL` `TOKEN` `THINK` `STATUS` |
-| Jalur provider | baru (dari badge-tag) | `JALUR PROVIDER  SENOPATI GAGAL: TIMEOUT 60 S → OLLAMA BERHASIL` |
-| Uji fallback | NVIDIA pill-tab + helper Huawei | `Normal` / `Simulasikan Senopati mati`; hanya dirender bila `APP_DEBUG=true` |
+| Jalur provider | baru (dari badge-tag) | `JALUR PROVIDER  OLLAMA GAGAL: TIDAK DAPAT DIHUBUNGI → SENOPATI BERHASIL` |
+| Uji fallback | NVIDIA pill-tab + helper Huawei | `Normal` / `Simulasikan Ollama mati` (nama dari provider pertama); hanya dirender bila `APP_DEBUG=true` |
 | Dialog token | Huawei | `<dialog>` bawaan HTML, overlay 60%, tampilkan token Bearer sekali + tombol salin |
 | Alert error | baru | latar `surface-soft`, garis kiri merah 4px |
 | Tabel riwayat | NVIDIA | header `surface-soft` kapital, baris dipisah `hairline` |
