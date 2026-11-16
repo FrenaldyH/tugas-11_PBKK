@@ -21,15 +21,15 @@ class ChatAiApiTest extends TestCase
     {
         parent::setUp();
 
-        // Same order as production (Senopati first), with Ollama enabled to exercise the fallback
+        // Same order as production (Challenge 3): local Ollama first, Senopati as fallback
         config([
-            'llm.order' => ['senopati', 'ollama'],
+            'llm.order' => ['ollama', 'senopati'],
             'llm.retries' => 1,
+            'llm.providers.ollama.base_url' => 'http://ollama.test/v1',
+            'llm.providers.ollama.model' => 'deephat:latest',
             'llm.providers.senopati.base_url' => 'https://senopati.test/v1',
             'llm.providers.senopati.model' => 'qwen3:14b',
             'llm.providers.senopati.api_key' => 'its-secret',
-            'llm.providers.ollama.base_url' => 'http://ollama.test/v1',
-            'llm.providers.ollama.model' => 'qwen3:14b',
         ]);
     }
 
@@ -91,12 +91,13 @@ class ChatAiApiTest extends TestCase
     {
         $user = User::factory()->create();
         Sanctum::actingAs($user);
-        Http::fake(['senopati.test/*' => Http::response($this->completion('Middleware adalah...', 'qwen3:14b'))]);
+        Http::fake(['ollama.test/*' => Http::response($this->completion('Middleware adalah...', 'deephat:latest'))]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Jelaskan middleware!', 'theme' => 'prompt_engineer'])
             ->assertCreated()
             ->assertJsonPath('status', 'success')
-            ->assertJsonPath('data.model_used', 'qwen3:14b')
+            ->assertJsonPath('data.provider', 'ollama')
+            ->assertJsonPath('data.model_used', 'deephat:latest')
             ->assertJsonPath('data.prompt', 'Jelaskan middleware!')
             ->assertJsonPath('data.ai_response', 'Middleware adalah...')
             ->assertJsonPath('data.tokens.total', 20)
@@ -105,14 +106,14 @@ class ChatAiApiTest extends TestCase
             ->assertJsonMissingPath('data.user_id');
 
         $this->assertDatabaseHas('chat_logs', [
-            'user_id' => $user->id, 'status' => 'success', 'provider' => 'senopati',
-            'model' => 'qwen3:14b', 'prompt_tokens' => 12, 'completion_tokens' => 8, 'total_tokens' => 20,
+            'user_id' => $user->id, 'status' => 'success', 'provider' => 'ollama',
+            'model' => 'deephat:latest', 'prompt_tokens' => 12, 'completion_tokens' => 8, 'total_tokens' => 20,
         ]);
 
-        // Same request shape as the campus curl example, plus the theme's system prompt as first message
-        Http::assertSent(fn (Request $r) => $r->url() === 'https://senopati.test/v1/chat/completions'
-            && $r->hasHeader('Authorization', 'Bearer its-secret')
-            && $r['model'] === 'qwen3:14b'
+        // Local Ollama needs no token; the theme's system prompt is the first message
+        Http::assertSent(fn (Request $r) => $r->url() === 'http://ollama.test/v1/chat/completions'
+            && ! $r->hasHeader('Authorization')
+            && $r['model'] === 'deephat:latest'
             && $r['messages'][0]['role'] === 'system'
             && $r['messages'][0]['content'] === config('llm.themes.prompt_engineer')
             && $r['think'] === false
@@ -122,7 +123,7 @@ class ChatAiApiTest extends TestCase
     public function test_think_flag_is_sent_to_gateway_and_logged(): void
     {
         Sanctum::actingAs(User::factory()->create());
-        Http::fake(['senopati.test/*' => Http::response($this->completion('Jakarta', 'qwen3:14b'))]);
+        Http::fake(['ollama.test/*' => Http::response($this->completion('Jakarta', 'deephat:latest'))]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Ibu kota?', 'think' => true])
             ->assertCreated()
@@ -132,22 +133,29 @@ class ChatAiApiTest extends TestCase
         $this->assertDatabaseHas('chat_logs', ['think' => true]);
     }
 
-    public function test_falls_back_to_ollama_when_senopati_is_down(): void
+    public function test_falls_back_to_senopati_when_ollama_is_down(): void
     {
         Sanctum::actingAs(User::factory()->create());
         Http::fake([
-            'senopati.test/*' => fn () => throw new ConnectionException('Connection refused'),
-            'ollama.test/*' => Http::response($this->completion('Jawaban Ollama', 'qwen3:14b')),
+            'ollama.test/*' => fn () => throw new ConnectionException('Connection refused'),
+            'senopati.test/*' => Http::response($this->completion('Jawaban Senopati', 'qwen3:14b')),
         ]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Halo'])
             ->assertCreated()
-            ->assertJsonPath('data.provider', 'ollama')
-            ->assertJsonPath('data.ai_response', 'Jawaban Ollama')
+            ->assertJsonPath('data.provider', 'senopati')
+            ->assertJsonPath('data.model_used', 'qwen3:14b')
+            ->assertJsonPath('data.ai_response', 'Jawaban Senopati')
             ->assertJsonPath('attempts', [
-                ['provider' => 'senopati', 'ok' => false, 'reason' => 'tidak dapat dihubungi'],
-                ['provider' => 'ollama', 'ok' => true, 'reason' => null],
+                ['provider' => 'ollama', 'ok' => false, 'reason' => 'tidak dapat dihubungi'],
+                ['provider' => 'senopati', 'ok' => true, 'reason' => null],
             ]);
+
+        // The fallback request has the same shape as the campus curl example
+        Http::assertSent(fn (Request $r) => $r->url() === 'https://senopati.test/v1/chat/completions'
+            && $r->hasHeader('Authorization', 'Bearer its-secret')
+            && $r['model'] === 'qwen3:14b'
+            && $r['messages'][1] === ['role' => 'user', 'content' => 'Halo']);
     }
 
     public function test_simulated_primary_outage_falls_back_in_debug_mode(): void
@@ -155,19 +163,19 @@ class ChatAiApiTest extends TestCase
         config(['app.debug' => true]);
         Sanctum::actingAs(User::factory()->create());
         Http::fake([
-            'senopati.test/*' => Http::response($this->completion('Jawaban Senopati', 'qwen3:14b')),
             'ollama.test/*' => Http::response($this->completion('Jawaban Ollama', 'deephat:latest')),
+            'senopati.test/*' => Http::response($this->completion('Jawaban Senopati', 'qwen3:14b')),
         ]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Halo', 'simulate_primary_down' => true])
             ->assertCreated()
-            ->assertJsonPath('data.provider', 'ollama')
-            ->assertJsonPath('data.model_used', 'deephat:latest')
-            ->assertJsonPath('attempts.0', ['provider' => 'senopati', 'ok' => false, 'reason' => 'disimulasikan mati']);
+            ->assertJsonPath('data.provider', 'senopati')
+            ->assertJsonPath('data.model_used', 'qwen3:14b')
+            ->assertJsonPath('attempts.0', ['provider' => 'ollama', 'ok' => false, 'reason' => 'disimulasikan mati']);
 
-        // The simulated outage happens before any request, so Senopati is never called
+        // The simulated outage happens before any request, so Ollama is never called
         Http::assertSentCount(1);
-        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), 'senopati.test'));
+        Http::assertNotSent(fn (Request $r) => str_contains($r->url(), 'ollama.test'));
     }
 
     public function test_simulation_is_ignored_when_debug_is_off(): void
@@ -175,13 +183,13 @@ class ChatAiApiTest extends TestCase
         config(['app.debug' => false]);
         Sanctum::actingAs(User::factory()->create());
         Http::fake([
-            'senopati.test/*' => Http::response($this->completion('Jawaban Senopati', 'qwen3:14b')),
             'ollama.test/*' => Http::response($this->completion('Jawaban Ollama', 'deephat:latest')),
+            'senopati.test/*' => Http::response($this->completion('Jawaban Senopati', 'qwen3:14b')),
         ]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Halo', 'simulate_primary_down' => true])
             ->assertCreated()
-            ->assertJsonPath('data.provider', 'senopati');
+            ->assertJsonPath('data.provider', 'ollama');
     }
 
     public function test_timeout_is_not_retried_and_falls_back(): void
@@ -191,16 +199,16 @@ class ChatAiApiTest extends TestCase
         Sanctum::actingAs(User::factory()->create());
         $calls = 0;
         Http::fake([
-            'senopati.test/*' => function () use (&$calls) {
+            'ollama.test/*' => function () use (&$calls) {
                 $calls++;
                 throw new ConnectionException('cURL error 28: Operation timed out after 60000 milliseconds');
             },
-            'ollama.test/*' => Http::response($this->completion('Jawaban Ollama', 'deephat:latest')),
+            'senopati.test/*' => Http::response($this->completion('Jawaban Senopati', 'qwen3:14b')),
         ]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Halo'])
             ->assertCreated()
-            ->assertJsonPath('data.provider', 'ollama')
+            ->assertJsonPath('data.provider', 'senopati')
             ->assertJsonPath('attempts.0.reason', 'timeout 60 s');
 
         $this->assertSame(1, $calls);
@@ -208,22 +216,22 @@ class ChatAiApiTest extends TestCase
 
     public function test_stream_timeout_is_recognised_by_elapsed_time(): void
     {
-        // In stream mode a timeout surfaces as "Connection refused", like the real Senopati outage
+        // In stream mode a timeout surfaces as "Connection refused" (seen in a real gateway outage)
         config(['llm.timeout' => 1]);
         Sanctum::actingAs(User::factory()->create());
-        $sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Dari Ollama\"}}]}\n\ndata: [DONE]\n\n";
+        $sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Dari Senopati\"}}]}\n\ndata: [DONE]\n\n";
         Http::fake([
-            'senopati.test/*' => function () {
+            'ollama.test/*' => function () {
                 usleep(950_000);
-                throw new ConnectionException('Connection refused for URI https://senopati.test/v1/chat/completions');
+                throw new ConnectionException('Connection refused for URI http://ollama.test/v1/chat/completions');
             },
-            'ollama.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream']),
+            'senopati.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream']),
         ]);
 
         $body = $this->postJson('/api/chat-ai/stream', ['prompt' => 'Halo'])->streamedContent();
 
-        $this->assertStringContainsString('"provider":"senopati","ok":false,"reason":"timeout 1 s"', $body);
-        $this->assertStringContainsString('"provider":"ollama","ok":true', $body);
+        $this->assertStringContainsString('"provider":"ollama","ok":false,"reason":"timeout 1 s"', $body);
+        $this->assertStringContainsString('"provider":"senopati","ok":true', $body);
     }
 
     public function test_wrong_senopati_token_is_not_retried(): void
@@ -233,7 +241,9 @@ class ChatAiApiTest extends TestCase
         Sanctum::actingAs(User::factory()->create());
         Http::fake(['senopati.test/*' => Http::response(['error' => ['message' => 'Authentication Error']], 401)]);
 
-        $this->postJson('/api/chat-ai', ['prompt' => 'Halo'])->assertStatus(503);
+        $this->postJson('/api/chat-ai', ['prompt' => 'Halo'])
+            ->assertStatus(503)
+            ->assertJsonPath('attempts.0.reason', 'HTTP 401');
 
         Http::assertSentCount(1);
     }
@@ -255,7 +265,7 @@ class ChatAiApiTest extends TestCase
     public function test_stream_sends_sse_events_and_logs_full_text(): void
     {
         Sanctum::actingAs(User::factory()->create());
-        // Same shape as the real gateway in reasoning mode: reasoning_content chunks first, then content
+        // Same shape as a reasoning model (qwen3): reasoning_content chunks first, then content
         $sse = implode('', [
             "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"RAHASIA-PIKIRAN\"}}]}\n\n",
             "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" lanjut\"}}]}\n\n",
@@ -264,13 +274,13 @@ class ChatAiApiTest extends TestCase
             "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\n",
             "data: [DONE]\n\n",
         ]);
-        Http::fake(['senopati.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream'])]);
+        Http::fake(['ollama.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream'])]);
 
         $response = $this->postJson('/api/chat-ai/stream', ['prompt' => 'Sapa aku', 'think' => true]);
 
         $response->assertOk()->assertHeader('Content-Type', 'text/event-stream; charset=UTF-8');
         $body = $response->streamedContent();
-        $this->assertStringContainsString("event: attempt\ndata: {\"provider\":\"senopati\",\"ok\":true,\"reason\":null}", $body);
+        $this->assertStringContainsString("event: attempt\ndata: {\"provider\":\"ollama\",\"ok\":true,\"reason\":null}", $body);
         $this->assertSame(1, substr_count($body, 'event: thinking'), 'thinking is signalled exactly once');
         $this->assertStringContainsString("event: token\ndata: {\"delta\":\"Halo \"}", $body);
         $this->assertStringContainsString('event: done', $body);
@@ -285,18 +295,18 @@ class ChatAiApiTest extends TestCase
     {
         config(['app.debug' => true]);
         Sanctum::actingAs(User::factory()->create());
-        $sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Dari Ollama\"}}]}\n\ndata: [DONE]\n\n";
-        Http::fake(['ollama.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream'])]);
+        $sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Dari Senopati\"}}]}\n\ndata: [DONE]\n\n";
+        Http::fake(['senopati.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream'])]);
 
         $body = $this->postJson('/api/chat-ai/stream', ['prompt' => 'Halo', 'simulate_primary_down' => true])
             ->streamedContent();
 
-        $failed = strpos($body, '"provider":"senopati","ok":false,"reason":"disimulasikan mati"');
-        $ok = strpos($body, '"provider":"ollama","ok":true');
+        $failed = strpos($body, '"provider":"ollama","ok":false,"reason":"disimulasikan mati"');
+        $ok = strpos($body, '"provider":"senopati","ok":true');
         $token = strpos($body, 'event: token');
         $this->assertTrue($failed !== false && $ok !== false && $token !== false, $body);
         $this->assertTrue($failed < $ok && $ok < $token, 'path is reported before the answer starts');
-        $this->assertDatabaseHas('chat_logs', ['provider' => 'ollama', 'response' => 'Dari Ollama']);
+        $this->assertDatabaseHas('chat_logs', ['provider' => 'senopati', 'response' => 'Dari Senopati']);
     }
 
     public function test_history_only_lists_own_logs(): void

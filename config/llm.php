@@ -5,9 +5,9 @@
 // (POST {base_url}/chat/completions), so one client handles both.
 return [
 
-    // Providers are tried in this order; the next one is the automatic fallback (Challenge 3).
-    // Default: campus Senopati first, local Ollama when Senopati fails.
-    'order' => array_filter(explode(',', env('LLM_PROVIDER_ORDER', 'senopati,ollama'))),
+    // Providers are tried in this order; the next one is the automatic fallback.
+    // Challenge 3: local Ollama first, ITS Senopati when Ollama is down.
+    'order' => array_filter(explode(',', env('LLM_PROVIDER_ORDER', 'ollama,senopati'))),
 
     'timeout' => (int) env('LLM_TIMEOUT', 60),
 
@@ -21,17 +21,17 @@ return [
     'think' => (bool) env('LLM_THINK', false),
 
     'providers' => [
-        // ITS campus LLM gateway (primary). The API key goes in .env, never in code.
-        'senopati' => [
-            'base_url' => env('SENOPATI_BASE_URL', 'https://senopati.its.ac.id/llm-gateway/v1'),
-            'model' => env('SENOPATI_MODEL', 'qwen3:14b'),
-            'api_key' => env('SENOPATI_API_KEY'),
-        ],
-        // Local Ollama (fallback). Model must exist locally: see `ollama list`
+        // Local Ollama (primary). Model must exist locally: see `ollama list`
         'ollama' => [
             'base_url' => env('OLLAMA_BASE_URL', 'http://localhost:11434/v1'),
             'model' => env('OLLAMA_MODEL', 'qwen3:14b'),
             'api_key' => null,
+        ],
+        // ITS campus LLM gateway (fallback). The API key goes in .env, never in code.
+        'senopati' => [
+            'base_url' => env('SENOPATI_BASE_URL', 'https://senopati.its.ac.id/llm-gateway/v1'),
+            'model' => env('SENOPATI_MODEL', 'qwen3:14b'),
+            'api_key' => env('SENOPATI_API_KEY'),
         ],
     ],
 
