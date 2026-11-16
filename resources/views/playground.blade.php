@@ -80,7 +80,7 @@
         /* Response panel, badges, alert (designed from NVIDIA tokens) */
         .panel { background: var(--surface-elevated); color: var(--on-dark); font: 400 14px/1.6 var(--mono);
                  border-radius: var(--r-sm); padding: 24px; min-height: 240px; white-space: pre-wrap; word-break: break-word; }
-        .panel.empty { color: var(--on-dark-mute); }
+        .panel.empty, .panel.waiting { color: var(--on-dark-mute); }
         .panel.streaming::after { content: ""; display: inline-block; width: 8px; height: 16px; margin-left: 2px;
                                   vertical-align: text-bottom; background: var(--primary); animation: blink 1s steps(1) infinite; }
         @keyframes blink { 50% { opacity: 0; } }
@@ -152,10 +152,19 @@
                 <h2>Kirim prompt</h2>
                 <div>
                     <span class="label" id="modeLabel">Mode respons</span>
-                    <div class="tabs" role="group" aria-labelledby="modeLabel">
-                        <button type="button" class="tab" data-mode="normal" aria-pressed="false">Biasa</button>
-                        <button type="button" class="tab" data-mode="stream" aria-pressed="true">Streaming</button>
+                    <div class="tabs" role="group" aria-labelledby="modeLabel" data-group="mode">
+                        <button type="button" class="tab" data-value="normal" aria-pressed="false">Biasa</button>
+                        <button type="button" class="tab" data-value="stream" aria-pressed="true">Streaming</button>
                     </div>
+                </div>
+                <div>
+                    {{-- Reasoning mode; default comes from LLM_THINK --}}
+                    <span class="label" id="thinkLabel">Mode berpikir</span>
+                    <div class="tabs" role="group" aria-labelledby="thinkLabel" aria-describedby="thinkHelp" data-group="think">
+                        <button type="button" class="tab" data-value="false" aria-pressed="{{ config('llm.think') ? 'false' : 'true' }}">Mati</button>
+                        <button type="button" class="tab" data-value="true" aria-pressed="{{ config('llm.think') ? 'true' : 'false' }}">Aktif</button>
+                    </div>
+                    <div class="field-foot"><span class="helper" id="thinkHelp">Aktif: model menalar dulu. Bisa lebih matang untuk tugas berat, tetapi jauh lebih lambat dan boros token.</span></div>
                 </div>
                 <div>
                     <label for="theme">Tema agent (system prompt)</label>
@@ -188,7 +197,7 @@
             <h2>Riwayat chat</h2>
             <div class="table-wrap">
                 <table>
-                    <thead><tr><th>ID</th><th>Waktu</th><th>Tema</th><th>Model</th><th>Token</th><th>Status</th><th>Prompt</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Waktu</th><th>Tema</th><th>Model</th><th>Token</th><th>Think</th><th>Status</th><th>Prompt</th></tr></thead>
                     <tbody id="historyBody"></tbody>
                 </table>
             </div>
@@ -212,7 +221,6 @@
 <script>
     // Small helpers
     const $ = (id) => document.getElementById(id);
-    let mode = 'stream';
 
     // Per-tab token storage; storage may be blocked, so every access is guarded.
     // Demo only: a token in sessionStorage is readable by any script on this page.
@@ -272,11 +280,34 @@
     $('copyBtn').addEventListener('click', () => navigator.clipboard?.writeText($('tokenText').textContent));
     $('closeDialog').addEventListener('click', () => $('tokenDialog').close());
 
-    // Mode tabs: Biasa (POST /chat-ai) or Streaming (POST /chat-ai/stream)
-    document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
-        mode = tab.dataset.mode;
-        document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-pressed', String(t === tab)));
+    // Pill-tab groups (mode, think): exactly one pressed tab per group
+    document.querySelectorAll('.tabs').forEach((group) => group.addEventListener('click', (e) => {
+        const tab = e.target.closest('.tab');
+        if (!tab) return;
+        group.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-pressed', String(t === tab)));
     }));
+
+    // Value of the pressed tab in a group
+    const pressed = (group) => document.querySelector(`[data-group="${group}"] [aria-pressed="true"]`).dataset.value;
+
+    // Waiting indicator with a live timer ("Menghubungi AI… N s", then "Model sedang berpikir… N s").
+    // Cleared when the first answer word arrives; the model's reasoning text itself is never shown.
+    let waitTimer = null;
+    function startWaiting(answer, label) {
+        stopWaiting(answer);
+        const t0 = Date.now();
+        answer.classList.add('waiting');
+        const tick = () => { answer.textContent = `${label}… ${Math.floor((Date.now() - t0) / 1000)} s`; };
+        tick();
+        waitTimer = setInterval(tick, 1000);
+    }
+    function stopWaiting(answer) {
+        if (!waitTimer) return;
+        clearInterval(waitTimer);
+        waitTimer = null;
+        answer.classList.remove('waiting');
+        answer.textContent = '';
+    }
 
     // Live character counter, mirrors the server's max:1000 rule
     $('prompt').addEventListener('input', () => {
@@ -289,6 +320,7 @@
     function renderMeta(data) {
         $('meta').replaceChildren(...[
             ['Provider', data.provider], ['Model', data.model_used], ['Token', data.tokens?.total ?? '-'],
+            ['Think', data.think ? 'aktif' : 'mati'],
         ].map(([k, v]) => {
             const b = document.createElement('span');
             b.className = 'badge';
@@ -333,10 +365,13 @@
         answer.classList.remove('empty');
         $('sendBtn').disabled = true;
 
-        const body = JSON.stringify({ prompt: $('prompt').value, theme: $('theme').value });
+        const think = pressed('think') === 'true';
+        const body = JSON.stringify({ prompt: $('prompt').value, theme: $('theme').value, think });
         try {
-            if (mode === 'normal') {
-                answer.textContent = 'Menunggu jawaban lengkap...';
+            if (pressed('mode') === 'normal') {
+                answer.textContent = think
+                    ? 'Menunggu jawaban lengkap (mode berpikir aktif, bisa jauh lebih lama)...'
+                    : 'Menunggu jawaban lengkap...';
                 const res = await api('/chat-ai', { method: 'POST', body });
                 const json = await res.json();
                 answer.textContent = '';
@@ -350,6 +385,7 @@
             $('chatError').textContent = 'Tidak dapat terhubung ke server.';
             $('chatError').hidden = false;
         } finally {
+            stopWaiting(answer);
             answer.classList.remove('streaming');
             $('sendBtn').disabled = false;
             loadHistory();
@@ -358,6 +394,8 @@
 
     // Read the SSE stream with fetch (EventSource cannot POST or send headers)
     async function streamAnswer(body, answer) {
+        // Headers only arrive with the first event, so show progress right away
+        startWaiting(answer, 'Menghubungi AI');
         const res = await api('/chat-ai/stream', { method: 'POST', body });
         if (!res.ok) return showError(res, await res.json());
 
@@ -376,9 +414,10 @@
                 buffer = buffer.slice(cut + 2);
                 const event = raw.match(/^event: (.*)$/m)?.[1];
                 const data = JSON.parse(raw.match(/^data: (.*)$/m)?.[1] || '{}');
-                if (event === 'token') answer.textContent += data.delta;
+                if (event === 'thinking') startWaiting(answer, 'Model sedang berpikir');
+                if (event === 'token') { stopWaiting(answer); answer.textContent += data.delta; }
                 if (event === 'done') renderMeta(data.data);
-                if (event === 'error') { $('chatError').textContent = data.message; $('chatError').hidden = false; }
+                if (event === 'error') { stopWaiting(answer); $('chatError').textContent = data.message; $('chatError').hidden = false; }
             }
         }
     }
@@ -392,7 +431,7 @@
         if (!rows.length) {
             const tr = tbody.insertRow();
             const td = tr.insertCell();
-            td.colSpan = 7;
+            td.colSpan = 8;
             td.className = 'helper';
             td.textContent = 'Belum ada riwayat.';
             return tbody.replaceChildren(tr);
@@ -400,7 +439,8 @@
         tbody.replaceChildren(...rows.map((r) => {
             const tr = document.createElement('tr');
             [[r.session_id, 'mono'], [r.timestamp, 'mono'], [r.theme, 'mono'], [r.model_used ?? '-', 'mono'],
-             [r.tokens.total ?? '-', 'mono'], [null, ''], [r.prompt, 'prompt']].forEach(([text, cls]) => {
+             [r.tokens.total ?? '-', 'mono'], [r.think ? 'aktif' : 'mati', 'mono'], [null, ''],
+             [r.prompt, 'prompt']].forEach(([text, cls]) => {
                 const td = tr.insertCell();
                 td.className = cls;
                 if (text === null) td.append(statusBadge(r.status)); else td.textContent = text;

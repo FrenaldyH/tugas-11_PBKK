@@ -87,6 +87,7 @@ components:
   hover-rule:       { rule: "warna aksen digelapkan +/-20% saat hover (Huawei: #007dff -> #0064cc). Di sini: primary -> primary-dark; link-blue -> underline tebal" }
   # --- RANCANGAN BARU (dari token NVIDIA) ---
   response-panel:   { backgroundColor: "{colors.surface-elevated}", textColor: "{colors.on-dark}", typography: "{typography.code}", rounded: "{rounded.sm}", padding: "{spacing.xl}", minHeight: 240px, caret: "blok 8x16px {colors.primary} berkedip saat streaming" }
+  waiting-indicator: { location: "di dalam response-panel", textColor: "{colors.on-dark-mute}", typography: "{typography.code}", text: "'Menghubungi AI… N s' lalu 'Model sedang berpikir… N s'", rule: "hilang saat kata pertama jawaban tiba; isi penalaran model tidak pernah ditampilkan" }
   meta-row:         { items: "badge-tag untuk PROVIDER, MODEL, TOKEN, STATUS", gap: "{spacing.sm}" }
   status-badge:     { base: "{components.badge-tag}", marker: "kotak 8px di kiri teks: success = {colors.primary}, failed = {colors.error}", text: "SUCCESS / FAILED (selalu ada teks)" }
   alert-inline:     { backgroundColor: "{colors.surface-soft}", borderLeft: "4px solid {colors.error}", textColor: "{colors.body}", typography: "{typography.body-sm}", padding: "{spacing.md} {spacing.lg}" }
@@ -153,9 +154,11 @@ eyebrow & header tabel `caption-md` huruf kapital. `display-xl` 48px tidak dipak
 | Label/helper/error | Huawei | label tebal di atas, helper abu di bawah, error merah + border merah |
 | Textarea prompt | Huawei | latar `input-fill`, penghitung `0/1000` di kanan bawah |
 | Pilihan mode | NVIDIA pill-tab | `Biasa` / `Streaming`, aktif = latar hitam teks putih |
+| Mode berpikir | NVIDIA pill-tab + helper Huawei | `Mati` / `Aktif`, default dari `LLM_THINK`; helper abu menjelaskan trade-off |
 | Pilihan tema agent | NVIDIA input | `<select>` bawaan dengan gaya input |
 | Panel jawaban | baru | latar `#1a1a1a`, teks putih mono, caret hijau saat streaming |
-| Baris meta | NVIDIA badge-tag | `PROVIDER` `MODEL` `TOKEN` `STATUS` |
+| Indikator tunggu | baru | teks `on-dark-mute` dengan penghitung detik; tidak menampilkan chain-of-thought |
+| Baris meta | NVIDIA badge-tag | `PROVIDER` `MODEL` `TOKEN` `THINK` `STATUS` |
 | Dialog token | Huawei | `<dialog>` bawaan HTML, overlay 60%, tampilkan token Bearer sekali + tombol salin |
 | Alert error | baru | latar `surface-soft`, garis kiri merah 4px |
 | Tabel riwayat | NVIDIA | header `surface-soft` kapital, baris dipisah `hairline` |
