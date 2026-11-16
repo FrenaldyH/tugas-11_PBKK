@@ -70,7 +70,7 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 
 ## Bagian 2 — Validasi input (FormRequest)
 
-**File:** `app/Http/Requests/ChatAiRequest.php` (`authorize`, `rules`, `messages`, `theme`).
+**File:** `app/Http/Requests/ChatAiRequest.php` (`authorize`, `rules`, `messages`, `theme`, `think`).
 
 **Cara kerja**
 - Controller menerima `ChatAiRequest`, bukan `Request` biasa. Laravel memvalidasi input **sebelum** method controller
@@ -80,6 +80,9 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 - Aturan: `prompt` wajib, berupa string, maksimal 1000 **karakter** (Laravel menghitung string dengan `mb_strlen`,
   jadi huruf beraksen dihitung 1). `theme` opsional dan harus salah satu kunci di `config('llm.themes')`.
 - `messages()` berisi pesan error berbahasa Indonesia. `theme()` mengembalikan `default` bila tema tidak dikirim.
+- `think` opsional dan harus boolean (`true`/`false`/`1`/`0`). `think()` memakai `$this->boolean('think', ...)`, dengan
+  nilai bawaan dari `config('llm.think')` (`LLM_THINK`). Jadi klien yang tidak mengirim `think` tetap mendapat perilaku
+  yang ditentukan server.
 
 **Kenapa begini**
 - Satu FormRequest dipakai **dua endpoint** (`/chat-ai` dan `/chat-ai/stream`). Aturannya cukup ditulis sekali dan
@@ -88,7 +91,7 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 - `authorize()` mengembalikan `true` karena pengecekan login sudah dilakukan middleware `auth:sanctum`, dan user hanya
   bisa membuat log atas namanya sendiri.
 
-**Test:** `test_prompt_is_validated` (prompt kosong, 1001 karakter, tema tidak dikenal).
+**Test:** `test_prompt_is_validated` (prompt kosong, 1001 karakter, tema tidak dikenal, `think: "mungkin"`).
 
 **Kemungkinan pertanyaan**
 - *Kenapa tidak `$request->validate()` di controller?* Bisa, tapi aturan yang sama harus ditulis dua kali. FormRequest
@@ -99,7 +102,8 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 
 ## Bagian 3 — Database & riwayat chat
 
-**File:** `database/migrations/2026_11_10_210214_create_chat_logs_table.php` · `app/Models/ChatLog.php` ·
+**File:** `database/migrations/2026_11_10_210214_create_chat_logs_table.php` ·
+`database/migrations/2026_11_16_230716_add_think_to_chat_logs_table.php` · `app/Models/ChatLog.php` ·
 `app/Models/User.php` (`chatLogs()`) · `ChatAiController` (`record`, `history`) · `database/seeders/DatabaseSeeder.php`.
 
 **Cara kerja**
@@ -109,6 +113,10 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
   otomatis dari pemilik token, **bukan dari input klien**. Itulah sebabnya `user_id` sengaja tidak ada di `$fillable`.
 - Request yang gagal juga dicatat (`status = failed`, `response` kosong atau berisi teks parsial dari streaming).
 - `history()` mengembalikan log milik user itu saja, 10 per halaman, terbaru dulu.
+- Kolom `think` (boolean) mencatat apakah mode berpikir dipakai. Kolom ini ditambahkan lewat **migrasi baru**, bukan
+  dengan mengedit migrasi lama. Migrasi lama sudah di-push, dan anggota yang sudah menjalankannya tidak akan menerima
+  perubahan bila file lama diedit; `php artisan migrate` hanya menjalankan migrasi yang belum pernah jalan. Model
+  memakai cast `boolean` karena database menyimpan 0/1.
 
 **Kenapa begini**
 - `cascadeOnDelete()`: user dihapus → lognya ikut terhapus, tidak ada baris yatim.
@@ -138,7 +146,8 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
   - **Mengganti nama:** `id → session_id`, `model → model_used`, `response → ai_response`.
   - **Mengelompokkan:** tiga kolom token menjadi satu objek `tokens`.
   - **Memformat:** `created_at` menjadi `Y-m-d H:i:s` (WIB, `config/app.php`).
-- `user_id` dan kolom internal **tidak ikut keluar**.
+- `user_id` dan kolom internal **tidak ikut keluar**. Field `think` ikut keluar supaya klien tahu mode mana yang
+  dipakai.
 - `store` menjawab **201 Created** (karena satu baris log baru dibuat) dengan bentuk `{"status", "data"}`, sama persis
   dengan contoh di slide tugas.
 - `history` memakai `ChatLogResource::collection()` pada hasil `paginate()`. Laravel otomatis menambahkan `links` dan
@@ -191,6 +200,15 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 - Slide memakai `/api/generate` (Ollama) dengan field `prompt`. Kita memakai format `messages` karena itulah format
   gateway Senopati, dan format ini punya peran `system` yang dibutuhkan tema di Bagian 6.
 - Token Senopati hanya ada di `.env`, yang tidak ikut Git. Di kode tidak ada rahasia.
+- `payload()` mengirim `"think": false` (diatur `LLM_THINK`). `qwen3:14b` secara default "berpikir" dulu sebelum
+  menjawab, dan proses berpikir itu dikirim di field terpisah, `reasoning_content`. Hasil ukur ke gateway asli dengan
+  pertanyaan satu kata:
+
+  | Pengaturan | Waktu | Token jawaban |
+  |---|---|---|
+  | Default (berpikir) | 5,5 s | 137, dan 128 di antaranya token berpikir |
+  | `/no_think` di system prompt | 2,7 s | 128 (masih berpikir, sakelar ini tidak berpengaruh di gateway ini) |
+  | `"think": false` | 0,7 s | 4 |
 
 **Batas yang perlu jujur diakui:** bila server *menggantung* (bukan mati), satu provider bisa menunggu sampai
 `timeout × retries` = 60 × 3 = ±3 menit sebelum fallback. Server yang mati (*connection refused*) gagal seketika.
@@ -211,6 +229,10 @@ pastikan koneksi stabil saat presentasi.
   menjawab 503 dan alasan aslinya (`Authentication Error`) tercatat di `storage/logs/laravel.log`.
 - *Bagaimana test berjalan tanpa token dan internet?* `Http::fake()` memalsukan semua respons HTTP. Test jadi cepat,
   tidak memakai kuota Senopati, dan hasilnya selalu sama.
+- *Kenapa mode berpikir dimatikan? Bukankah jawabannya jadi kurang pintar?* Bisa jadi, untuk tugas yang berat. Tapi
+  dalam ukuran kami, berpikir membuat jawaban ±8× lebih lambat dan hampir semua token habis untuk proses yang tidak
+  ditampilkan. Outline FP PromptLab sendiri juga meminta agar chain-of-thought tidak ditampilkan. Pengaturannya ada di
+  `.env` (`LLM_THINK=true`), jadi bisa dinyalakan tanpa mengubah kode bila kualitas lebih penting daripada kecepatan.
 
 ---
 
@@ -240,16 +262,29 @@ pastikan koneksi stabil saat presentasi.
    menjadi exception. Header `X-Accel-Buffering: no` mencegah nginx menahan stream di server produksi.
 6. Di browser, playground memakai `fetch()` + `ReadableStream`, bukan `EventSource`. Alasannya, `EventSource` hanya
    bisa GET dan tidak bisa mengirim header `Authorization`.
+7. **Mode berpikir:** generator memakai *key* sebagai jenis event. `readSse()` meng-`yield 'thinking' => ''` **sekali**
+   saat potongan `reasoning_content` pertama tiba, lalu `yield 'token' => teks` untuk setiap potongan jawaban.
+   Controller membaca `foreach ($stream as $event => $delta)` dan mengirim event SSE dengan nama yang sama.
+   Playground menampilkan "Menghubungi AI… N s" sejak tombol ditekan (header HTTP baru tiba bersama event pertama),
+   lalu "Model sedang berpikir… N s" saat event `thinking` datang, dan menghapusnya saat kata pertama jawaban tiba.
 
-**Bukti:** pada uji dengan server LLM tiruan yang mengirim 1 kata per 0,3 detik, event `token` tiba di klien dengan
-jeda 0,3 detik juga. Artinya data benar-benar mengalir, bukan dikirim sekaligus di akhir.
+**Bukti**
+- Server LLM tiruan yang mengirim 1 kata per 0,3 detik: event `token` tiba di klien dengan jeda 0,3 detik juga. Artinya
+  server Laravel benar-benar meneruskan data begitu tiba, bukan menimbunnya.
+- Gateway Senopati asli (jawaban 226 token): kata pertama tiba di 2,3 s, kata terakhir di 4,7 s. Teks mengalir selama
+  2,45 detik, bukan muncul sekaligus. Token tiba berkelompok (beberapa token per paket jaringan), tetapi bagi pengguna
+  teks tetap terlihat mengalir.
+- Proses berpikir `qwen3` dikirim di `delta.reasoning_content`. Parser hanya membaca `delta.content`, jadi isi pikiran
+  model tidak pernah tampil ke pengguna maupun tersimpan di database.
 
 **Kenapa begini**
 - Fallback hanya bisa terjadi **sebelum** token pertama. Setelah teks terkirim ke pengguna, teks itu tidak bisa ditarik
   kembali. Kalau putus di tengah, teks parsial tetap disimpan dengan status `failed`.
 - Validasi (422) dan auth (401) tetap berupa JSON biasa karena keduanya berjalan sebelum stream dibuka.
 
-**Test:** `test_stream_sends_sse_events_and_logs_full_text`; tema dibuktikan di
+**Test:** `test_stream_sends_sse_events_and_logs_full_text` (memastikan `thinking` dikirim tepat sekali dan teks
+penalaran palsu `RAHASIA-PIKIRAN` tidak muncul di respons maupun DB), `test_think_flag_is_sent_to_gateway_and_logged`;
+tema dibuktikan di
 `test_chat_returns_resource_and_logs_to_database` (`Http::assertSent` memeriksa pesan `system` pertama).
 
 **Kemungkinan pertanyaan**

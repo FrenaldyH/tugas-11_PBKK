@@ -59,6 +59,7 @@ Akun demo: `demo@promptlab.test` / `password`.
 | `LLM_TIMEOUT` | `60` | detik per request ke LLM |
 | `LLM_RETRIES` | `3` | percobaan per provider (hanya untuk error koneksi / HTTP 5xx) |
 | `LLM_TEMPERATURE` | `0.7` | kreativitas jawaban |
+| `LLM_THINK` | `false` | mode berpikir `qwen3`; `false` = jawaban jauh lebih cepat dan kata pertama streaming langsung muncul |
 | `SENOPATI_BASE_URL` | `https://senopati.its.ac.id/llm-gateway/v1` | gateway LLM kampus, format Chat Completion OpenAI |
 | `SENOPATI_MODEL` | `qwen3:14b` | model di gateway Senopati |
 | `SENOPATI_API_KEY` | kosong | **wajib diisi** token ITS; dikirim sebagai `Authorization: Bearer` |
@@ -102,6 +103,7 @@ Kirim prompt, tunggu jawaban lengkap. Dibatasi 20 request/menit per user.
 |---|---|---|
 | `prompt` | string | wajib, maks 1000 karakter |
 | `theme` | string | opsional: `default` (bawaan), `prompt_engineer`, `context_engineer`, `evaluator` |
+| `think` | boolean | opsional: mode berpikir `qwen3` untuk request ini; bila tidak dikirim, ikut `LLM_THINK` |
 
 ```json
 // Request
@@ -115,6 +117,7 @@ Kirim prompt, tunggu jawaban lengkap. Dibatasi 20 request/menit per user.
     "status": "success",
     "provider": "senopati",
     "model_used": "qwen3:14b",
+    "think": false,
     "theme": "default",
     "prompt": "Jelaskan middleware!",
     "ai_response": "Middleware adalah...",
@@ -131,9 +134,12 @@ Kirim prompt, tunggu jawaban lengkap. Dibatasi 20 request/menit per user.
 ```
 
 ### 🔒 `POST /chat-ai/stream`
-Body sama dengan `/chat-ai`. Respons `Content-Type: text/event-stream` berisi tiga jenis event:
+Body sama dengan `/chat-ai`. Respons `Content-Type: text/event-stream` berisi event berikut:
 
 ```text
+event: thinking
+data: {"thinking":true}
+
 event: token
 data: {"delta":"Middleware "}
 
@@ -144,6 +150,8 @@ event: done
 data: {"status":"success","data":{ ...sama dengan data /chat-ai... }}
 ```
 
+`thinking` hanya dikirim **sekali**, dan hanya bila `think: true`, saat model mulai menalar. Isi penalarannya
+(`reasoning_content` dari gateway) **tidak pernah** diteruskan ke klien maupun disimpan.
 Bila gagal: `event: error` `data: {"status":"error","message":"Streaming gagal. Coba lagi nanti."}`.
 Fallback (bila diaktifkan) hanya terjadi **sebelum** token pertama keluar; teks yang sudah terkirim tidak bisa ditarik.
 Validasi (422) dan auth (401) tetap dijawab JSON biasa sebelum stream dibuka.
@@ -187,6 +195,7 @@ daftar yang sama, jadi ikut berubah otomatis.
 | `user_id` | FK → `users` | `cascadeOnDelete` |
 | `theme` | string(50) | tema system prompt |
 | `provider` / `model` | string, nullable | null bila semua provider gagal |
+| `think` | boolean | mode berpikir yang dipakai (migrasi `add_think_to_chat_logs_table`) |
 | `prompt` / `response` | text / longText | `response` null bila gagal total |
 | `status` | string(10) | `success` / `failed` |
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | unsigned int, nullable | dari field `usage` LLM |
