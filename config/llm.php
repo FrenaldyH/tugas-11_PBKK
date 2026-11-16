@@ -6,7 +6,8 @@
 return [
 
     // Providers are tried in this order; the next one is the automatic fallback.
-    'order' => array_filter(explode(',', env('LLM_PROVIDER_ORDER', 'ollama,senopati'))),
+    // Default: campus Senopati only. Add a local fallback with LLM_PROVIDER_ORDER=senopati,ollama
+    'order' => array_filter(explode(',', env('LLM_PROVIDER_ORDER', 'senopati'))),
 
     'timeout' => (int) env('LLM_TIMEOUT', 60),
 
@@ -16,16 +17,17 @@ return [
     'temperature' => (float) env('LLM_TEMPERATURE', 0.7),
 
     'providers' => [
+        // ITS campus LLM gateway (primary). The API key goes in .env, never in code.
+        'senopati' => [
+            'base_url' => env('SENOPATI_BASE_URL', 'https://senopati.its.ac.id/llm-gateway/v1'),
+            'model' => env('SENOPATI_MODEL', 'qwen3:14b'),
+            'api_key' => env('SENOPATI_API_KEY'),
+        ],
+        // Local Ollama (optional fallback, off unless listed in LLM_PROVIDER_ORDER)
         'ollama' => [
             'base_url' => env('OLLAMA_BASE_URL', 'http://localhost:11434/v1'),
             'model' => env('OLLAMA_MODEL', 'qwen3:14b'),
             'api_key' => null,
-        ],
-        'senopati' => [
-            // ASSUMPTION: Senopati exposes an OpenAI-compatible endpoint; set the real URL from ITS.
-            'base_url' => env('SENOPATI_BASE_URL'),
-            'model' => env('SENOPATI_MODEL'),
-            'api_key' => env('SENOPATI_API_KEY'),
         ],
     ],
 

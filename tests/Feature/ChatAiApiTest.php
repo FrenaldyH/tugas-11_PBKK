@@ -21,14 +21,15 @@ class ChatAiApiTest extends TestCase
     {
         parent::setUp();
 
+        // Same order as production (Senopati first), with Ollama enabled to exercise the fallback
         config([
-            'llm.order' => ['ollama', 'senopati'],
+            'llm.order' => ['senopati', 'ollama'],
             'llm.retries' => 1,
+            'llm.providers.senopati.base_url' => 'https://senopati.test/v1',
+            'llm.providers.senopati.model' => 'qwen3:14b',
+            'llm.providers.senopati.api_key' => 'its-secret',
             'llm.providers.ollama.base_url' => 'http://ollama.test/v1',
             'llm.providers.ollama.model' => 'qwen3:14b',
-            'llm.providers.senopati.base_url' => 'https://senopati.test/v1',
-            'llm.providers.senopati.model' => 'senopati-chat',
-            'llm.providers.senopati.api_key' => 'its-secret',
         ]);
     }
 
@@ -88,7 +89,7 @@ class ChatAiApiTest extends TestCase
     {
         $user = User::factory()->create();
         Sanctum::actingAs($user);
-        Http::fake(['ollama.test/*' => Http::response($this->completion('Middleware adalah...', 'qwen3:14b'))]);
+        Http::fake(['senopati.test/*' => Http::response($this->completion('Middleware adalah...', 'qwen3:14b'))]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Jelaskan middleware!', 'theme' => 'prompt_engineer'])
             ->assertCreated()
@@ -101,31 +102,43 @@ class ChatAiApiTest extends TestCase
             ->assertJsonMissingPath('data.user_id');
 
         $this->assertDatabaseHas('chat_logs', [
-            'user_id' => $user->id, 'status' => 'success', 'provider' => 'ollama',
+            'user_id' => $user->id, 'status' => 'success', 'provider' => 'senopati',
             'model' => 'qwen3:14b', 'prompt_tokens' => 12, 'completion_tokens' => 8, 'total_tokens' => 20,
         ]);
 
-        // The theme's system prompt is injected as the first message
-        Http::assertSent(fn (Request $r) => $r['messages'][0]['role'] === 'system'
+        // Same request shape as the campus curl example, plus the theme's system prompt as first message
+        Http::assertSent(fn (Request $r) => $r->url() === 'https://senopati.test/v1/chat/completions'
+            && $r->hasHeader('Authorization', 'Bearer its-secret')
+            && $r['model'] === 'qwen3:14b'
+            && $r['messages'][0]['role'] === 'system'
             && $r['messages'][0]['content'] === config('llm.themes.prompt_engineer')
             && $r['stream'] === false);
     }
 
-    public function test_falls_back_to_senopati_when_ollama_is_down(): void
+    public function test_falls_back_to_ollama_when_senopati_is_down(): void
     {
         Sanctum::actingAs(User::factory()->create());
         Http::fake([
-            'ollama.test/*' => fn () => throw new ConnectionException('Connection refused'),
-            'senopati.test/*' => Http::response($this->completion('Jawaban Senopati', 'senopati-chat')),
+            'senopati.test/*' => fn () => throw new ConnectionException('Connection refused'),
+            'ollama.test/*' => Http::response($this->completion('Jawaban Ollama', 'qwen3:14b')),
         ]);
 
         $this->postJson('/api/chat-ai', ['prompt' => 'Halo'])
             ->assertCreated()
-            ->assertJsonPath('data.provider', 'senopati')
-            ->assertJsonPath('data.ai_response', 'Jawaban Senopati');
+            ->assertJsonPath('data.provider', 'ollama')
+            ->assertJsonPath('data.ai_response', 'Jawaban Ollama');
+    }
 
-        Http::assertSent(fn (Request $r) => str_contains($r->url(), 'senopati.test')
-            && $r->hasHeader('Authorization', 'Bearer its-secret'));
+    public function test_wrong_senopati_token_is_not_retried(): void
+    {
+        // A 401 will not heal by retrying, so only one request may be sent even with retries enabled
+        config(['llm.order' => ['senopati'], 'llm.retries' => 3]);
+        Sanctum::actingAs(User::factory()->create());
+        Http::fake(['senopati.test/*' => Http::response(['error' => ['message' => 'Authentication Error']], 401)]);
+
+        $this->postJson('/api/chat-ai', ['prompt' => 'Halo'])->assertStatus(503);
+
+        Http::assertSentCount(1);
     }
 
     public function test_returns_503_and_logs_failure_when_all_providers_fail(): void
@@ -149,7 +162,7 @@ class ChatAiApiTest extends TestCase
             "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}\n\n",
             "data: [DONE]\n\n",
         ]);
-        Http::fake(['ollama.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream'])]);
+        Http::fake(['senopati.test/*' => Http::response($sse, 200, ['Content-Type' => 'text/event-stream'])]);
 
         $response = $this->postJson('/api/chat-ai/stream', ['prompt' => 'Sapa aku']);
 
