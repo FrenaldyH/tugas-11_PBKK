@@ -90,6 +90,10 @@
         @keyframes blink { 50% { opacity: 0; } }
         @media (prefers-reduced-motion: reduce) { .panel.streaming::after { animation: none; } }
         .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+        /* Fallback path (Challenge 3): label + badges joined by arrows */
+        .route { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+        .route-label { font: 700 12px/1.43 var(--font); text-transform: uppercase; color: var(--mute); }
+        .route .arrow { color: var(--mute); }
         .badge { background: var(--surface-soft); color: var(--body); font: 700 12px/1.43 var(--font); text-transform: uppercase;
                  border-radius: var(--r-sm); padding: 4px 10px; display: inline-flex; align-items: center; gap: 6px; }
         .badge .mono { font-family: var(--mono); font-weight: 400; text-transform: none; }
@@ -170,6 +174,17 @@
                     </div>
                     <div class="field-foot"><span class="helper" id="thinkHelp">Aktif: model menalar dulu. Bisa lebih matang untuk tugas berat, tetapi jauh lebih lambat dan boros token.</span></div>
                 </div>
+                @if (config('app.debug'))
+                    {{-- Challenge 3 test switch; the API also ignores it unless APP_DEBUG=true --}}
+                    <div>
+                        <span class="label" id="simLabel">Uji fallback (Challenge 3)</span>
+                        <div class="tabs" role="group" aria-labelledby="simLabel" aria-describedby="simHelp" data-group="simulate">
+                            <button type="button" class="tab" data-value="false" aria-pressed="true">Normal</button>
+                            <button type="button" class="tab" data-value="true" aria-pressed="false">Simulasikan {{ ucfirst(config('llm.order')[0] ?? 'provider utama') }} mati</button>
+                        </div>
+                        <div class="field-foot"><span class="helper" id="simHelp">Urutan provider: {{ implode(' → ', config('llm.order')) }}. Hanya muncul saat APP_DEBUG=true.</span></div>
+                    </div>
+                @endif
                 <div>
                     <label for="theme">Tema agent (system prompt)</label>
                     <select class="input" id="theme">
@@ -193,6 +208,7 @@
                 <h2>Jawaban AI</h2>
                 <div class="alert" id="chatError" role="alert" hidden></div>
                 <div class="panel empty" id="answer" aria-live="polite">Jawaban AI akan muncul di sini.</div>
+                <div class="route" id="route" hidden></div>
                 <div class="meta" id="meta"></div>
             </div>
         </div>
@@ -201,7 +217,7 @@
             <h2>Riwayat chat</h2>
             <div class="table-wrap">
                 <table>
-                    <thead><tr><th>ID</th><th>Waktu</th><th>Tema</th><th>Model</th><th>Token</th><th>Think</th><th>Status</th><th>Prompt</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Waktu</th><th>Tema</th><th>Provider</th><th>Model</th><th>Token</th><th>Think</th><th>Status</th><th>Prompt</th></tr></thead>
                     <tbody id="historyBody"></tbody>
                 </table>
             </div>
@@ -292,7 +308,7 @@
     }));
 
     // Value of the pressed tab in a group
-    const pressed = (group) => document.querySelector(`[data-group="${group}"] [aria-pressed="true"]`).dataset.value;
+    const pressed = (group) => document.querySelector(`[data-group="${group}"] [aria-pressed="true"]`)?.dataset.value;
 
     // Waiting indicator with a live timer ("Menghubungi AI… N s", then "Model sedang berpikir… N s").
     // Cleared when the first answer word arrives; the model's reasoning text itself is never shown.
@@ -344,6 +360,31 @@
         return b;
     }
 
+    // Fallback path: "Jalur provider  SENOPATI GAGAL: HTTP 401 → OLLAMA BERHASIL"
+    function renderRoute(attempts) {
+        const box = $('route');
+        box.replaceChildren();
+        (attempts || []).forEach((a, i) => {
+            if (i === 0) {
+                const label = document.createElement('span');
+                label.className = 'route-label';
+                label.textContent = 'Jalur provider';
+                box.append(label);
+            } else {
+                const arrow = document.createElement('span');
+                arrow.className = 'arrow';
+                arrow.setAttribute('aria-hidden', 'true');
+                arrow.textContent = '→';
+                box.append(arrow);
+            }
+            const b = document.createElement('span');
+            b.className = 'badge ' + (a.ok ? 'success' : 'failed');
+            b.textContent = a.provider + (a.ok ? ' berhasil' : ' gagal: ' + a.reason);
+            box.append(b);
+        });
+        box.hidden = !box.childElementCount;
+    }
+
     // Show validation (422) or server errors
     function showError(res, json) {
         if (res.status === 422 && json.errors?.prompt) {
@@ -365,12 +406,16 @@
         $('prompt').classList.remove('invalid');
         $('chatError').hidden = true;
         $('meta').replaceChildren();
+        renderRoute([]);
         answer.textContent = '';
         answer.classList.remove('empty');
         $('sendBtn').disabled = true;
 
         const think = pressed('think') === 'true';
-        const body = JSON.stringify({ prompt: $('prompt').value, theme: $('theme').value, think });
+        const body = JSON.stringify({
+            prompt: $('prompt').value, theme: $('theme').value, think,
+            simulate_primary_down: pressed('simulate') === 'true',
+        });
         try {
             if (pressed('mode') === 'normal') {
                 answer.textContent = think
@@ -379,6 +424,7 @@
                 const res = await api('/chat-ai', { method: 'POST', body });
                 const json = await res.json();
                 answer.textContent = '';
+                renderRoute(json.attempts);
                 if (!res.ok) return showError(res, json);
                 answer.textContent = json.data.ai_response;
                 renderMeta(json.data);
@@ -404,6 +450,7 @@
         if (!res.ok) return showError(res, await res.json());
 
         answer.classList.add('streaming');
+        const attempts = [];
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -418,6 +465,13 @@
                 buffer = buffer.slice(cut + 2);
                 const event = raw.match(/^event: (.*)$/m)?.[1];
                 const data = JSON.parse(raw.match(/^data: (.*)$/m)?.[1] || '{}');
+                if (event === 'attempt') {
+                    attempts.push(data);
+                    renderRoute(attempts);
+                    startWaiting(answer, data.ok
+                        ? `Menunggu jawaban dari ${data.provider}`
+                        : `${data.provider} gagal, beralih ke provider berikutnya`);
+                }
                 if (event === 'thinking') startWaiting(answer, 'Model sedang berpikir');
                 if (event === 'token') { stopWaiting(answer); answer.textContent += data.delta; }
                 if (event === 'done') renderMeta(data.data);
@@ -435,14 +489,15 @@
         if (!rows.length) {
             const tr = tbody.insertRow();
             const td = tr.insertCell();
-            td.colSpan = 8;
+            td.colSpan = 9;
             td.className = 'helper';
             td.textContent = 'Belum ada riwayat.';
             return tbody.replaceChildren(tr);
         }
         tbody.replaceChildren(...rows.map((r) => {
             const tr = document.createElement('tr');
-            [[r.session_id, 'mono'], [r.timestamp, 'mono'], [r.theme, 'mono'], [r.model_used ?? '-', 'mono'],
+            [[r.session_id, 'mono'], [r.timestamp, 'mono'], [r.theme, 'mono'], [r.provider ?? '-', 'mono'],
+             [r.model_used ?? '-', 'mono'],
              [r.tokens.total ?? '-', 'mono'], [r.think ? 'aktif' : 'mati', 'mono'], [null, ''],
              [r.prompt, 'prompt']].forEach(([text, cls]) => {
                 const td = tr.insertCell();

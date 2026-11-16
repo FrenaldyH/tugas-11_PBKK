@@ -88,7 +88,8 @@ components:
   # --- RANCANGAN BARU (dari token NVIDIA) ---
   response-panel:   { backgroundColor: "{colors.surface-elevated}", textColor: "{colors.on-dark}", typography: "{typography.code}", rounded: "{rounded.sm}", padding: "{spacing.xl}", minHeight: 240px, caret: "blok 8x16px {colors.primary} berkedip saat streaming" }
   waiting-indicator: { location: "di dalam response-panel", textColor: "{colors.on-dark-mute}", typography: "{typography.code}", text: "'Menghubungi AI… N s' lalu 'Model sedang berpikir… N s'", rule: "hilang saat kata pertama jawaban tiba; isi penalaran model tidak pernah ditampilkan" }
-  meta-row:         { items: "badge-tag untuk PROVIDER, MODEL, TOKEN, STATUS", gap: "{spacing.sm}" }
+  meta-row:         { items: "badge-tag untuk PROVIDER, MODEL, TOKEN, THINK, STATUS", gap: "{spacing.sm}" }
+  provider-route:   { label: "'JALUR PROVIDER' {typography.caption-md} {colors.mute}", items: "status-badge per provider (kotak merah = gagal + alasan, kotak hijau = berhasil)", separator: "panah '→' {colors.mute}, aria-hidden" }
   status-badge:     { base: "{components.badge-tag}", marker: "kotak 8px di kiri teks: success = {colors.primary}, failed = {colors.error}", text: "SUCCESS / FAILED (selalu ada teks)" }
   alert-inline:     { backgroundColor: "{colors.surface-soft}", borderLeft: "4px solid {colors.error}", textColor: "{colors.body}", typography: "{typography.body-sm}", padding: "{spacing.md} {spacing.lg}" }
   history-table:    { headerBackground: "{colors.surface-soft}", headerTypography: "{typography.caption-md}", bodyTypography: "{typography.body-sm}", rowBorder: "1px solid {colors.hairline}", cellPadding: "{spacing.sm} {spacing.md}" }
@@ -159,6 +160,8 @@ eyebrow & header tabel `caption-md` huruf kapital. `display-xl` 48px tidak dipak
 | Panel jawaban | baru | latar `#1a1a1a`, teks putih mono, caret hijau saat streaming |
 | Indikator tunggu | baru | teks `on-dark-mute` dengan penghitung detik; tidak menampilkan chain-of-thought |
 | Baris meta | NVIDIA badge-tag | `PROVIDER` `MODEL` `TOKEN` `THINK` `STATUS` |
+| Jalur provider | baru (dari badge-tag) | `JALUR PROVIDER  SENOPATI GAGAL: TIMEOUT 60 S → OLLAMA BERHASIL` |
+| Uji fallback | NVIDIA pill-tab + helper Huawei | `Normal` / `Simulasikan Senopati mati`; hanya dirender bila `APP_DEBUG=true` |
 | Dialog token | Huawei | `<dialog>` bawaan HTML, overlay 60%, tampilkan token Bearer sekali + tombol salin |
 | Alert error | baru | latar `surface-soft`, garis kiri merah 4px |
 | Tabel riwayat | NVIDIA | header `surface-soft` kapital, baris dipisah `hairline` |
