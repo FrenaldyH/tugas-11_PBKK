@@ -27,11 +27,15 @@ class ChatAiController extends Controller
         $messages = $this->llm->messages($request->prompt, $request->theme());
 
         try {
-            $result = $this->llm->chat($messages, $request->think());
+            $result = $this->llm->chat($messages, $request->think(), $request->simulatePrimaryDown());
         } catch (Throwable $e) {
             $this->record($request, ['status' => 'failed']);
 
-            return response()->json(['status' => 'error', 'message' => $e->getMessage().' Coba lagi nanti.'], 503);
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage().' Coba lagi nanti.',
+                'attempts' => $this->llm->attempts(),
+            ], 503);
         }
 
         $log = $this->record($request, [
@@ -41,29 +45,36 @@ class ChatAiController extends Controller
             'response' => $result['content'],
         ] + $this->tokens($result['usage']));
 
-        return response()->json(['status' => 'success', 'data' => new ChatLogResource($log)], 201);
+        // attempts = fallback path, e.g. senopati failed -> ollama answered
+        return response()->json([
+            'status' => 'success',
+            'data' => new ChatLogResource($log),
+            'attempts' => $this->llm->attempts(),
+        ], 201);
     }
 
     // POST /api/chat-ai/stream: Server-Sent Events.
-    // Events: thinking {thinking} (once, only in reasoning mode), token {delta}, done {status,data}, error {message}.
+    // Events: attempt {provider,ok,reason} (per provider tried), thinking {thinking} (once, reasoning mode only),
+    // token {delta}, done {status,data}, error {message,attempts}.
     public function stream(ChatAiRequest $request): StreamedResponse
     {
         $messages = $this->llm->messages($request->prompt, $request->theme());
 
         return response()->stream(function () use ($request, $messages) {
             $text = '';
-            $stream = $this->llm->stream($messages, $request->think());
+            $stream = $this->llm->stream($messages, $request->think(), $request->simulatePrimaryDown());
 
             try {
-                // The generator key is the event type: "thinking" or "token"
-                foreach ($stream as $event => $delta) {
-                    if ($event === 'thinking') {
+                // The generator key is the event type: "attempt", "thinking" or "token"
+                foreach ($stream as $event => $value) {
+                    if ($event === 'token') {
+                        $text .= $value;
+                        $this->sendEvent('token', ['delta' => $value]);
+                    } elseif ($event === 'attempt') {
+                        $this->sendEvent('attempt', $value);
+                    } else {
                         $this->sendEvent('thinking', ['thinking' => true]);
-
-                        continue;
                     }
-                    $text .= $delta;
-                    $this->sendEvent('token', ['delta' => $delta]);
                 }
                 $meta = $stream->getReturn();
 
@@ -79,7 +90,11 @@ class ChatAiController extends Controller
                 Log::error('LLM stream failed: '.$e->getMessage());
                 // Keep whatever arrived before the failure
                 $this->record($request, ['status' => 'failed', 'response' => $text !== '' ? $text : null]);
-                $this->sendEvent('error', ['status' => 'error', 'message' => 'Streaming gagal. Coba lagi nanti.']);
+                $this->sendEvent('error', [
+                    'status' => 'error',
+                    'message' => 'Streaming gagal. Coba lagi nanti.',
+                    'attempts' => $this->llm->attempts(),
+                ]);
             }
         }, 200, [
             'Content-Type' => 'text/event-stream',

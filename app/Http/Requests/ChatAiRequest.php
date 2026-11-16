@@ -20,6 +20,7 @@ class ChatAiRequest extends FormRequest
             'prompt' => ['required', 'string', 'max:1000'],
             'theme' => ['sometimes', 'string', Rule::in(array_keys(config('llm.themes')))],
             'think' => ['sometimes', 'boolean'],
+            'simulate_primary_down' => ['sometimes', 'boolean'],
         ];
     }
 
@@ -38,6 +39,13 @@ class ChatAiRequest extends FormRequest
     public function theme(): string
     {
         return $this->input('theme', 'default');
+    }
+
+    // Fake an outage of the first provider to demo the fallback. Only honoured when APP_DEBUG=true,
+    // so nobody can switch the primary provider off on a production server.
+    public function simulatePrimaryDown(): bool
+    {
+        return config('app.debug') && $this->boolean('simulate_primary_down');
     }
 
     // Reasoning mode for this request; falls back to LLM_THINK when not sent.

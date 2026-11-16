@@ -5,9 +5,9 @@
 // (POST {base_url}/chat/completions), so one client handles both.
 return [
 
-    // Providers are tried in this order; the next one is the automatic fallback.
-    // Default: campus Senopati only. Add a local fallback with LLM_PROVIDER_ORDER=senopati,ollama
-    'order' => array_filter(explode(',', env('LLM_PROVIDER_ORDER', 'senopati'))),
+    // Providers are tried in this order; the next one is the automatic fallback (Challenge 3).
+    // Default: campus Senopati first, local Ollama when Senopati fails.
+    'order' => array_filter(explode(',', env('LLM_PROVIDER_ORDER', 'senopati,ollama'))),
 
     'timeout' => (int) env('LLM_TIMEOUT', 60),
 
@@ -27,7 +27,7 @@ return [
             'model' => env('SENOPATI_MODEL', 'qwen3:14b'),
             'api_key' => env('SENOPATI_API_KEY'),
         ],
-        // Local Ollama (optional fallback, off unless listed in LLM_PROVIDER_ORDER)
+        // Local Ollama (fallback). Model must exist locally: see `ollama list`
         'ollama' => [
             'base_url' => env('OLLAMA_BASE_URL', 'http://localhost:11434/v1'),
             'model' => env('OLLAMA_MODEL', 'qwen3:14b'),
