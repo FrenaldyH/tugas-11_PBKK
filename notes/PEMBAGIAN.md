@@ -26,7 +26,7 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 2. Middleware `throttle:20,1` membatasi 20 request per menit per user.
 3. Laravel membuat `ChatAiRequest` dan memvalidasi input. Kalau gagal → 422, controller tidak dijalankan → **Bagian 2**.
 4. `ChatAiController@store` meminta `LlmClient` menyusun pesan: system prompt tema + prompt user → **Bagian 6**.
-5. `LlmClient::chat()` memanggil Ollama. Kalau gagal → retry → fallback ke Senopati → **Bagian 5**.
+5. `LlmClient::chat()` memanggil gateway Senopati AI ITS. Kalau gagal → retry → fallback (opsional) → **Bagian 5**.
 6. Hasil dicatat ke tabel `chat_logs` → **Bagian 3**.
 7. Baris log dibungkus `ChatLogResource` dan dikirim sebagai JSON 201 → **Bagian 4**.
 
@@ -165,14 +165,18 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
 
 ---
 
-## Bagian 5 — Integrasi LLM & fallback (Challenge 3)
+## Bagian 5 — Integrasi LLM (Senopati) & fallback (Challenge 3)
 
 **File:** `config/llm.php` (`order`, `providers`, `timeout`, `retries`, `temperature`) · `app/Services/LlmClient.php`
 (`chat`, `providers`, `request`, `payload`, `isTransient`).
 
 **Cara kerja**
-- Ollama dan Senopati sama-sama dipanggil dengan format **Chat Completion OpenAI** (`POST {base_url}/chat/completions`).
-  Ollama punya endpoint kompatibel di `/v1`, jadi satu kode melayani dua provider.
+- Provider utama adalah **Senopati AI ITS**, gateway LLM kampus di
+  `https://senopati.its.ac.id/llm-gateway/v1`, model `qwen3:14b`. Request-nya sama persis dengan contoh `curl` dari
+  kampus: `POST {base_url}/chat/completions`, header `Authorization: Bearer <token>`, body `model` + `messages`.
+- `request()` memasang token dari `SENOPATI_API_KEY` dengan `withToken()`, yang menghasilkan header Bearer.
+- Ollama lokal tersedia sebagai **fallback opsional**. Ollama punya endpoint dengan format yang sama di `/v1`, jadi satu
+  kode melayani dua provider. Default-nya mati; aktifkan dengan `LLM_PROVIDER_ORDER=senopati,ollama`.
 - `providers()` mengurutkan provider sesuai `LLM_PROVIDER_ORDER`, dan melewati provider yang URL/model-nya kosong.
 - `chat()` mencoba provider satu per satu:
   1. Kirim request dengan `timeout(60)`.
@@ -184,24 +188,29 @@ Contoh: `POST /api/chat-ai` dengan `{"prompt": "Jelaskan middleware!", "theme": 
   baris ini, dengan `LLM_RETRIES=1`, respons 500 bisa tercatat sebagai "sukses" dengan jawaban kosong.
 
 **Kenapa begini**
-- Slide memakai `/api/generate` dengan field `prompt`. Kita memakai format `messages` karena format itu punya peran
-  `system` (dibutuhkan tema di Bagian 6) dan sama dengan format Senopati.
-- Semua nilai (URL, model, token, timeout) ada di `.env`, jadi tidak ada rahasia di kode.
+- Slide memakai `/api/generate` (Ollama) dengan field `prompt`. Kita memakai format `messages` karena itulah format
+  gateway Senopati, dan format ini punya peran `system` yang dibutuhkan tema di Bagian 6.
+- Token Senopati hanya ada di `.env`, yang tidak ikut Git. Di kode tidak ada rahasia.
 
 **Batas yang perlu jujur diakui:** bila server *menggantung* (bukan mati), satu provider bisa menunggu sampai
 `timeout × retries` = 60 × 3 = ±3 menit sebelum fallback. Server yang mati (*connection refused*) gagal seketika.
-Untuk demo, turunkan `LLM_TIMEOUT` dan/atau `LLM_RETRIES` di `.env`.
+Untuk demo, turunkan `LLM_TIMEOUT` dan/atau `LLM_RETRIES` di `.env`. Karena Senopati diakses lewat internet,
+pastikan koneksi stabil saat presentasi.
 
-**Test:** `test_falls_back_to_senopati_when_ollama_is_down` (Ollama dibuat gagal koneksi, Senopati menjawab, header
-Bearer dicek), `test_returns_503_and_logs_failure_when_all_providers_fail`.
+**Test:**
+- `test_chat_returns_resource_and_logs_to_database`: URL, header Bearer, model, dan isi `messages` dicek sama dengan
+  contoh `curl` kampus.
+- `test_falls_back_to_ollama_when_senopati_is_down`: Senopati dibuat gagal koneksi, lalu Ollama yang menjawab.
+- `test_wrong_senopati_token_is_not_retried`: 401 hanya dikirim sekali, walau retry diaktifkan.
+- `test_returns_503_and_logs_failure_when_all_providers_fail`.
 
 **Kemungkinan pertanyaan**
 - *Kenapa timeout wajib?* LLM bisa berpikir puluhan detik. Tanpa batas, proses PHP menggantung dan menghabiskan worker
   server.
-- *Format API Senopati sudah pasti?* Belum; dokumentasi publiknya tidak ditemukan. Kita mengasumsikan format OpenAI dan
-  semuanya bisa diatur dari `.env` (tertulis di README).
-- *Bagaimana test berjalan tanpa Ollama?* `Http::fake()` memalsukan semua respons HTTP. Test jadi cepat, tidak butuh
-  GPU, dan hasilnya selalu sama.
+- *Kalau token Senopati salah, apa yang terjadi?* Gateway menjawab 401. Error ini tidak di-retry, lalu API kita
+  menjawab 503 dan alasan aslinya (`Authentication Error`) tercatat di `storage/logs/laravel.log`.
+- *Bagaimana test berjalan tanpa token dan internet?* `Http::fake()` memalsukan semua respons HTTP. Test jadi cepat,
+  tidak memakai kuota Senopati, dan hasilnya selalu sama.
 
 ---
 
@@ -259,7 +268,7 @@ jeda 0,3 detik juga. Artinya data benar-benar mengalir, bukan dikirim sekaligus 
 | 2 Validasi | `ChatAiRequest` | `prompt_is_validated` | Autentikasi & Validasi (20%) |
 | 3 Database | migrasi `chat_logs`, `ChatLog`, `history` | logs to database, 503 logged, history own logs | Logging & Riwayat DB (20%) |
 | 4 Resource & UI | `ChatLogResource`, playground | JSON path/structure | Fungsionalitas (40%) |
-| 5 LLM & fallback | `LlmClient::chat`, `config/llm.php` | fallback, 503 | Fungsionalitas (40%) + Challenge (10%) |
+| 5 LLM & fallback | `LlmClient::chat`, `config/llm.php` | fallback, 401 tidak di-retry, 503 | Fungsionalitas (40%) + Challenge (10%) |
 | 6 Stream & tema | `LlmClient::stream`, `ChatAiController::stream` | stream SSE, system prompt | Challenge (10%) |
 
 Kerapian kode (10%) menjadi tanggung jawab bersama: `./vendor/bin/pint --test` harus `passed`.
