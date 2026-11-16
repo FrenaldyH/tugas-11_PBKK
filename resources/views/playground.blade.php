@@ -20,7 +20,9 @@
             --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
         }
         * { box-sizing: border-box; }
-        body { margin: 0; background: var(--canvas); color: var(--body); font: 400 16px/1.5 var(--font); }
+        /* Column layout so the footer sits at the bottom even when the content is short */
+        body { margin: 0; background: var(--canvas); color: var(--body); font: 400 16px/1.5 var(--font);
+               min-height: 100vh; display: flex; flex-direction: column; }
         [hidden] { display: none !important; }
         :focus-visible { outline: 2px solid var(--primary-dark); outline-offset: 2px; }
         .wrap { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
@@ -49,7 +51,9 @@
         .btn-dark:hover { background: var(--surface-elevated); }
 
         /* Cards with corner-square (NVIDIA) */
-        main { padding: 32px 0 64px; }
+        /* main.wrap outranks .wrap, so the vertical padding is not reset by .wrap's "padding: 0 24px";
+           width: 100% stops the auto margins from shrinking it inside the flex column */
+        main.wrap { padding-top: 32px; padding-bottom: 64px; flex: 1 0 auto; width: 100%; }
         .card { position: relative; border: 1px solid var(--hairline); border-radius: var(--r-sm); padding: 24px; background: var(--canvas); }
         .card::before { content: ""; position: absolute; top: -1px; left: -1px; width: 12px; height: 12px; background: var(--primary); }
         .card h2 { font: 700 20px/1.25 var(--font); color: var(--ink); margin: 0 0 16px; }
