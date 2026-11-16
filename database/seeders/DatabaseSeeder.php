@@ -15,11 +15,11 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // Demo account for Postman / the playground page (password: "password")
-        User::factory()->create([
-            'name' => 'Demo Kelompok 1',
-            'email' => 'demo@promptlab.test',
-            'password' => 'password',
-        ]);
+        // Demo account for Postman / the playground page (password: "password").
+        // firstOrCreate looks the email up first, so re-running the seeder never hits the unique index.
+        User::firstOrCreate(
+            ['email' => 'demo@promptlab.test'],
+            ['name' => 'Demo Kelompok 1', 'password' => 'password', 'email_verified_at' => now()],
+        );
     }
 }
