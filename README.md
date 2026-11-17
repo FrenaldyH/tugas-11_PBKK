@@ -22,14 +22,27 @@ Pertemuan 12; untuk sekarang tersedia halaman **playground** di `/` untuk demo (
 
 ## Instalasi
 
+**Sekali saja (pertama kali clone):**
+
 ```bash
 composer install
-cp .env.example .env
+php -r "file_exists('.env') || copy('.env.example', '.env');"   # hanya menyalin bila .env belum ada
 php artisan key:generate
 touch database/database.sqlite
 php artisan migrate --seed        # membuat akun demo
+```
+
+Lalu isi `.env` (token Senopati, `OLLAMA_MODEL`; lihat di bawah).
+
+**Setiap kali menjalankan:**
+
+```bash
 php artisan serve                 # http://127.0.0.1:8000
 ```
+
+> **Jangan** menjalankan `cp .env.example .env` setelah `.env` diisi. `.env.example` sengaja berisi
+> nilai kosong karena ikut Git, jadi perintah itu menimpa token dan `OLLAMA_MODEL` Anda. Setelah `git pull`, cukup
+> `composer install` (bila ada paket baru) dan `php artisan migrate`. Variabel baru di `.env.example` disalin manual.
 
 **Provider utama: Ollama lokal (Challenge 3).** Jalankan Ollama dan isi `OLLAMA_MODEL` dengan model dari `ollama list`
 (model 7B kuantisasi Q4 muat di GPU 6 GB):
